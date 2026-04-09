@@ -89,7 +89,6 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
 ```sh
 musafety setup [--target <path>] [--dry-run] [--yes-global-install|--no-global-install]
 musafety copy-prompt
-musafety release   # maintainer-only publish (guarded)
 bash scripts/agent-worktree-prune.sh --base dev   # manual stale worktree cleanup
 ```
 
@@ -98,7 +97,6 @@ No command defaults to `musafety setup`.
 - Interactive setup: prompts for Y/N approval before global OMX/OpenSpec install.
 - Interactive prompt is strict (`[y/n]`) and waits for explicit answer.
 - Non-interactive setup: skips global installs by default; use `--yes-global-install` to force.
-- Common typos are auto-corrected (for example `musafety relaese` -> `musafety release`).
 
 ## Advanced commands
 
@@ -107,16 +105,6 @@ musafety install [--target <path>] [--force] [--skip-agents] [--skip-package-jso
 musafety fix [--target <path>] [--dry-run] [--keep-stale-locks]
 musafety scan [--target <path>] [--json]
 ```
-
-## Maintainer release command
-
-`musafety release` is intentionally strict and only runs `npm publish` when all checks pass:
-
-1. current repo root is exactly `/tmp/multiagent-safety`
-2. current branch is `main`
-3. git working tree is clean
-
-It does **not** bump versions or edit changelog/release notes.
 
 ## What is protected
 
@@ -156,12 +144,6 @@ npm pack --dry-run
 - `agent-branch-finish.sh` now auto-runs prune after merge (best effort).
 - Added npm helper script: `agent:cleanup`.
 
-### v0.4.3
-
-- Added typo helper for common command misspellings.
-- `relaese` / `realaese` now auto-map to `release`.
-- Unknown commands now provide nearest-command suggestions when possible.
-
 ### v0.4.2
 
 - Setup now detects existing global OMX/OpenSpec installs first.
@@ -169,15 +151,6 @@ npm pack --dry-run
 - Interactive approval is now strict `[y/n]` (waits for explicit answer).
 - Added setup screenshot to README.
 - Added 3 additional workflow screenshots (branch start, lock/delete guard, source-control view).
-
-### v0.4.1
-
-- Added `musafety release` (maintainer-only).
-- Release command now hard-blocks unless:
-  - repo is `/tmp/multiagent-safety`
-  - branch is `main`
-  - working tree is clean
-- Release action is strictly `npm publish` (no version/changelog mutation).
 
 ### v0.4.0
 
