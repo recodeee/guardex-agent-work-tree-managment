@@ -1,42 +1,77 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1360" viewBox="0 0 1080 1360" role="img" aria-labelledby="title desc">
-  <title id="title">multi-agent branch visibility screenshot</title>
-  <desc id="desc">Illustrative IDE source control panel view with multiple agent branches and protected dev branch visible.</desc>
+  <title id="title">multi-agent source control with active changes</title>
+  <desc id="desc">Illustrative IDE source control panel showing protected dev branch, active agent branch, and a concrete file change list with statuses.</desc>
+
   <rect width="1080" height="1360" fill="#1e1e1e"/>
-  <rect x="0" y="0" width="1080" height="74" fill="#252526"/>
-  <text x="26" y="48" font-size="30" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">SOURCE CONTROL</text>
+  <rect x="0" y="0" width="1080" height="76" fill="#252526"/>
+  <text x="20" y="50" font-size="31" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">SOURCE CONTROL</text>
 
-  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="28" fill="#d4d4d4">
-    <rect x="16" y="110" width="1048" height="182" rx="8" fill="#24292f"/>
-    <text x="40" y="154">agent/assistant/20260410-branch-start-flow</text>
-    <text x="40" y="198" fill="#8b949e">Message (Ctrl+Enter to commit on agent branch)</text>
-    <rect x="56" y="220" width="968" height="50" rx="6" fill="#0e639c"/>
-    <text x="476" y="255" fill="#d4d4d4">Commit</text>
+  <!-- codex-lb protected branch row -->
+  <rect x="14" y="102" width="1052" height="120" rx="8" fill="#20252b" stroke="#2d333b"/>
+  <text x="34" y="144" font-size="28" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">▾  codex-lb</text>
+  <text x="760" y="144" font-size="24" fill="#8b949e" font-family="Inter, Segoe UI, Arial, sans-serif">⎇ dev</text>
+  <text x="34" y="186" font-size="24" fill="#8b949e" font-family="Inter, Segoe UI, Arial, sans-serif">Message (Ctrl+Enter to commit on "dev")</text>
 
-    <rect x="16" y="316" width="1048" height="182" rx="8" fill="#1f6feb22" stroke="#1f6feb"/>
-    <text x="40" y="360">codex-lb</text>
-    <text x="870" y="360" fill="#8b949e">branch: dev</text>
-    <text x="40" y="404" fill="#8b949e">Protected integration branch</text>
-    <rect x="56" y="426" width="968" height="50" rx="6" fill="#0e639c"/>
-    <text x="476" y="461" fill="#d4d4d4">Commit</text>
+  <!-- active agent branch -->
+  <rect x="14" y="240" width="1052" height="212" rx="8" fill="#1f2a3a" stroke="#2f81f7"/>
+  <text x="34" y="282" font-size="26" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">▾  agent_assistant__20260410-003707-auto-prune-agent-worktree</text>
+  <text x="34" y="324" font-size="24" fill="#8b949e" font-family="Inter, Segoe UI, Arial, sans-serif">Message (Ctrl+Enter to commit on "agent/...worktree")</text>
+  <rect x="34" y="348" width="1012" height="52" rx="6" fill="#0e639c"/>
+  <text x="510" y="383" text-anchor="middle" font-size="30" fill="#e6edf3" font-family="Inter, Segoe UI, Arial, sans-serif">✓ Commit</text>
+  <text x="34" y="430" font-size="22" fill="#a5b4fc" font-family="Inter, Segoe UI, Arial, sans-serif">Active branch has pending file edits below</text>
 
-    <rect x="16" y="522" width="1048" height="182" rx="8" fill="#24292f"/>
-    <text x="40" y="566">agent/integrator/20260410-verify-guardrails</text>
-    <text x="40" y="610" fill="#8b949e">Message (Ctrl+Enter to commit on integrator branch)</text>
-    <rect x="56" y="632" width="968" height="50" rx="6" fill="#0e639c"/>
-    <text x="476" y="667" fill="#d4d4d4">Commit</text>
+  <!-- changes header -->
+  <rect x="14" y="472" width="1052" height="56" rx="8" fill="#252526"/>
+  <text x="34" y="508" font-size="27" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">▾ Changes</text>
+  <circle cx="1025" cy="500" r="16" fill="#3b4252"/>
+  <text x="1025" y="507" text-anchor="middle" font-size="21" fill="#d4d4d4" font-family="Inter, Segoe UI, Arial, sans-serif">8</text>
 
-    <rect x="16" y="728" width="1048" height="182" rx="8" fill="#24292f"/>
-    <text x="40" y="772">agent/reviewer/20260410-lock-protocol-audit</text>
-    <text x="40" y="816" fill="#8b949e">Message (Ctrl+Enter to commit on reviewer branch)</text>
-    <rect x="56" y="838" width="968" height="50" rx="6" fill="#0e639c"/>
-    <text x="476" y="873" fill="#d4d4d4">Commit</text>
+  <!-- file changes list -->
+  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24">
+    <rect x="14" y="538" width="1052" height="760" rx="8" fill="#1e1e1e" stroke="#2d333b"/>
+
+    <text x="34" y="584" fill="#7ee787">JS</text>
+    <text x="86" y="584" fill="#d4d4d4">package.json</text>
+    <text x="468" y="584" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="584" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="636" fill="#79c0ff">i</text>
+    <text x="86" y="636" fill="#d4d4d4">README.md</text>
+    <text x="468" y="636" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="636" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="688" fill="#e3b341">JS</text>
+    <text x="86" y="688" fill="#d4d4d4">multiagent-safety.js</text>
+    <text x="468" y="688" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="688" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="740" fill="#ff7b72">▶</text>
+    <text x="86" y="740" fill="#d4d4d4">agent-branch-finish.sh</text>
+    <text x="468" y="740" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="740" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="792" fill="#ff7b72">▶</text>
+    <text x="86" y="792" fill="#d4d4d4">agent-worktree-prune.sh</text>
+    <text x="468" y="792" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="792" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="844" fill="#e3b341">⚠</text>
+    <text x="86" y="844" fill="#d4d4d4">install.test.js</text>
+    <text x="468" y="844" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="844" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="896" fill="#ff7b72">▶</text>
+    <text x="86" y="896" fill="#d4d4d4">agent-branch-finish.sh</text>
+    <text x="468" y="896" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="896" text-anchor="end" fill="#e3b341">M</text>
+
+    <text x="34" y="948" fill="#ff7b72">▶</text>
+    <text x="86" y="948" fill="#d4d4d4">agent-worktree-prune.sh</text>
+    <text x="468" y="948" fill="#8b949e">.omx/agent-worktrees/agent_assistant__20260410-003707...</text>
+    <text x="1020" y="948" text-anchor="end" fill="#56d364">U</text>
   </g>
 
-  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="24" fill="#8b949e">
-    <text x="26" y="980">Multi-agent safety pattern:</text>
-    <text x="54" y="1022">• agents work on isolated branches</text>
-    <text x="54" y="1060">• each branch owns explicit file locks</text>
-    <text x="54" y="1098">• changes integrate back through guarded finish script</text>
-    <text x="54" y="1136">• dev/main stay protected from direct unsafe commits</text>
+  <g font-family="Inter, Segoe UI, Arial, sans-serif" font-size="22" fill="#8b949e">
+    <text x="20" y="1324">This view emphasizes that active agent branches carry real diffs, not just commit message boxes.</text>
   </g>
 </svg>
