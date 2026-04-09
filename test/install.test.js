@@ -102,6 +102,7 @@ test('setup provisions workflow files and repo config', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
   assert.equal(packageJson.scripts['agent:branch:start'], 'bash ./scripts/agent-branch-start.sh');
   assert.equal(packageJson.scripts['agent:plan:init'], 'bash ./scripts/openspec/init-plan-workspace.sh');
+  assert.equal(packageJson.scripts['agent:protect:list'], 'musafety protect list');
   assert.equal(packageJson.scripts['agent:safety:setup'], 'musafety setup');
   assert.equal(packageJson.scripts['agent:cleanup'], 'bash ./scripts/agent-worktree-prune.sh --base dev');
 
@@ -122,6 +123,52 @@ test('default invocation runs setup', () => {
   const result = runNode([], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(fs.existsSync(path.join(repoDir, '.githooks', 'pre-commit')), true);
+});
+
+test('protect command manages configured protected branches', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+
+  let result = runNode(['protect', 'list', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /dev, main, master/);
+
+  result = runNode(['protect', 'add', 'release', 'staging', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /release, staging/);
+
+  result = runNode(['protect', 'list', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /dev, main, master, release, staging/);
+
+  result = runNode(['protect', 'remove', 'dev', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runNode(['protect', 'list', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /main, master, release, staging/);
+
+  result = runNode(['protect', 'reset', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /reset to defaults/);
+});
+
+test('pre-commit blocks custom protected branches configured via musafety protect', () => {
+  const repoDir = initRepoOnBranch('release');
+  seedCommit(repoDir);
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runNode(['protect', 'add', 'release', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const hookResult = runCmd('bash', ['.githooks/pre-commit'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '0',
+    VSCODE_GIT_IPC_HANDLE: '1',
+  });
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /Direct commits on protected branches are blocked/);
 });
 
 test('pre-commit blocks protected branch commits even from VS Code Source Control env', () => {

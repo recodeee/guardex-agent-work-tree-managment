@@ -97,6 +97,12 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
    bash scripts/agent-branch-start.sh "task" "agent-name"
    python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
    bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+
+5) Optional: create OpenSpec planning workspace:
+   bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
+
+6) Optional: protect extra branches:
+   musafety protect add release staging
 ```
 
 ## Basic commands
@@ -104,6 +110,11 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
 ```sh
 musafety setup [--target <path>] [--dry-run] [--yes-global-install|--no-global-install]
 musafety copy-prompt
+musafety protect list [--target <path>]
+musafety protect add <branch...> [--target <path>]
+musafety protect remove <branch...> [--target <path>]
+musafety protect set <branch...> [--target <path>]
+musafety protect reset [--target <path>]
 bash scripts/agent-worktree-prune.sh --base dev   # manual stale worktree cleanup
 bash scripts/openspec/init-plan-workspace.sh <plan-slug>   # optional OpenSpec plan scaffold
 ```
@@ -122,9 +133,33 @@ musafety fix [--target <path>] [--dry-run] [--keep-stale-locks]
 musafety scan [--target <path>] [--json]
 ```
 
+## Configure protected branches
+
+Default protected branches are:
+
+- `dev`
+- `main`
+- `master`
+
+You can manage additional protected branches via CLI:
+
+```sh
+musafety protect list
+musafety protect add release staging
+musafety protect remove dev
+musafety protect set main release hotfix
+musafety protect reset
+```
+
+Configuration is stored in local git config key:
+
+```text
+multiagent.protectedBranches
+```
+
 ## What is protected
 
-- direct commits to protected branches (`dev`, `main`, `master`)
+- direct commits to protected branches (defaults: `dev`, `main`, `master`; configurable via `musafety protect ...`)
 - protected-branch commits are blocked regardless of commit client (including VS Code Source Control)
 - overlapping file ownership between agents
 - unapproved deletions of claimed files

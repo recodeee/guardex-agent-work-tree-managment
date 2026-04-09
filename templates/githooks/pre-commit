@@ -10,7 +10,21 @@ if [[ "${ALLOW_COMMIT_ON_PROTECTED_BRANCH:-0}" == "1" ]]; then
   exit 0
 fi
 
-if [[ "$branch" == "dev" || "$branch" == "main" || "$branch" == "master" ]]; then
+protected_branches_raw="${MUSAFETY_PROTECTED_BRANCHES:-$(git config --get multiagent.protectedBranches || true)}"
+if [[ -z "$protected_branches_raw" ]]; then
+  protected_branches_raw="dev main master"
+fi
+protected_branches_raw="${protected_branches_raw//,/ }"
+
+is_protected_branch=0
+for protected_branch in $protected_branches_raw; do
+  if [[ "$branch" == "$protected_branch" ]]; then
+    is_protected_branch=1
+    break
+  fi
+done
+
+if [[ "$is_protected_branch" == "1" ]]; then
   git_dir="$(git rev-parse --git-dir)"
   if [[ -f "$git_dir/MERGE_HEAD" ]]; then
     exit 0

@@ -14,6 +14,8 @@ const MAINTAINER_RELEASE_REPO = path.resolve(
   process.env.MUSAFETY_RELEASE_REPO || '/tmp/multiagent-safety',
 );
 const NPM_BIN = process.env.MUSAFETY_NPM_BIN || 'npm';
+const GIT_PROTECTED_BRANCHES_KEY = 'multiagent.protectedBranches';
+const DEFAULT_PROTECTED_BRANCHES = ['dev', 'main', 'master'];
 
 const TEMPLATE_ROOT = path.resolve(__dirname, '..', 'templates');
 
@@ -58,6 +60,7 @@ const COMMAND_TYPO_ALIASES = new Map([
 const SUGGESTIBLE_COMMANDS = [
   'setup',
   'copy-prompt',
+  'protect',
   'release',
   'install',
   'fix',
@@ -91,6 +94,9 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup multi-agent safety in
 
 5) Optional: create OpenSpec planning workspace:
    bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
+
+6) Optional: protect extra branches:
+   musafety protect add release staging
 `;
 
 function usage() {
@@ -99,6 +105,7 @@ function usage() {
 Simple usage (recommended):
   ${TOOL_NAME} setup [--target <path>] [--dry-run] [--yes-global-install|--no-global-install]
   ${TOOL_NAME} copy-prompt
+  ${TOOL_NAME} protect <list|add|remove|set|reset> [branches...] [--target <path>]
   ${TOOL_NAME} release
 
 Advanced:
@@ -295,6 +302,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
     'agent:locks:release': 'python3 ./scripts/agent-file-locks.py release',
     'agent:locks:status': 'python3 ./scripts/agent-file-locks.py status',
     'agent:plan:init': 'bash ./scripts/openspec/init-plan-workspace.sh',
+    'agent:protect:list': `${TOOL_NAME} protect list`,
     'agent:safety:setup': `${TOOL_NAME} setup`,
     'agent:safety:scan': `${TOOL_NAME} scan`,
     'agent:safety:fix': `${TOOL_NAME} fix`,
@@ -408,6 +416,66 @@ function parseCommonArgs(rawArgs, defaults) {
   }
 
   return options;
+}
+
+function parseTargetFlag(rawArgs, defaultTarget = process.cwd()) {
+  const remaining = [];
+  let target = defaultTarget;
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--target') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--target requires a path value');
+      }
+      target = next;
+      index += 1;
+      continue;
+    }
+    remaining.push(arg);
+  }
+
+  return { target, args: remaining };
+}
+
+function parseBranchList(rawValue) {
+  return String(rawValue || '')
+    .split(/[\s,]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniquePreserveOrder(items) {
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    if (seen.has(item)) continue;
+    seen.add(item);
+    result.push(item);
+  }
+  return result;
+}
+
+function readProtectedBranches(repoRoot) {
+  const result = gitRun(repoRoot, ['config', '--get', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
+  if (result.status !== 0) {
+    return [...DEFAULT_PROTECTED_BRANCHES];
+  }
+
+  const parsed = uniquePreserveOrder(parseBranchList(result.stdout.trim()));
+  if (parsed.length === 0) {
+    return [...DEFAULT_PROTECTED_BRANCHES];
+  }
+  return parsed;
+}
+
+function writeProtectedBranches(repoRoot, branches) {
+  if (branches.length === 0) {
+    gitRun(repoRoot, ['config', '--unset-all', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
+    return;
+  }
+  gitRun(repoRoot, ['config', GIT_PROTECTED_BRANCHES_KEY, branches.join(' ')]);
 }
 
 function isInteractiveTerminal() {
@@ -1016,6 +1084,84 @@ function copyPrompt() {
   process.exitCode = 0;
 }
 
+function protect(rawArgs) {
+  const parsed = parseTargetFlag(rawArgs, process.cwd());
+  const [subcommand, ...rest] = parsed.args;
+  const repoRoot = resolveRepoRoot(parsed.target);
+
+  if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
+    console.log(
+      `${TOOL_NAME} protect commands:\n` +
+      `  ${TOOL_NAME} protect list [--target <path>]\n` +
+      `  ${TOOL_NAME} protect add <branch...> [--target <path>]\n` +
+      `  ${TOOL_NAME} protect remove <branch...> [--target <path>]\n` +
+      `  ${TOOL_NAME} protect set <branch...> [--target <path>]\n` +
+      `  ${TOOL_NAME} protect reset [--target <path>]`,
+    );
+    process.exitCode = 0;
+    return;
+  }
+
+  const requestedBranches = uniquePreserveOrder(parseBranchList(rest.join(' ')));
+
+  if (subcommand === 'list') {
+    const branches = readProtectedBranches(repoRoot);
+    console.log(`[${TOOL_NAME}] Protected branches (${branches.length}): ${branches.join(', ')}`);
+    process.exitCode = 0;
+    return;
+  }
+
+  if (subcommand === 'add') {
+    if (requestedBranches.length === 0) {
+      throw new Error('protect add requires one or more branch names');
+    }
+    const current = readProtectedBranches(repoRoot);
+    const next = uniquePreserveOrder([...current, ...requestedBranches]);
+    writeProtectedBranches(repoRoot, next);
+    console.log(`[${TOOL_NAME}] Protected branches updated: ${next.join(', ')}`);
+    process.exitCode = 0;
+    return;
+  }
+
+  if (subcommand === 'remove') {
+    if (requestedBranches.length === 0) {
+      throw new Error('protect remove requires one or more branch names');
+    }
+    const current = readProtectedBranches(repoRoot);
+    const removals = new Set(requestedBranches);
+    const next = current.filter((branch) => !removals.has(branch));
+    writeProtectedBranches(repoRoot, next);
+    console.log(
+      `[${TOOL_NAME}] Protected branches updated: ` +
+      `${(next.length > 0 ? next : DEFAULT_PROTECTED_BRANCHES).join(', ')}`,
+    );
+    if (next.length === 0) {
+      console.log(`[${TOOL_NAME}] Reset to defaults (${DEFAULT_PROTECTED_BRANCHES.join(', ')}) because list was empty.`);
+    }
+    process.exitCode = 0;
+    return;
+  }
+
+  if (subcommand === 'set') {
+    if (requestedBranches.length === 0) {
+      throw new Error('protect set requires one or more branch names');
+    }
+    writeProtectedBranches(repoRoot, requestedBranches);
+    console.log(`[${TOOL_NAME}] Protected branches set: ${requestedBranches.join(', ')}`);
+    process.exitCode = 0;
+    return;
+  }
+
+  if (subcommand === 'reset') {
+    writeProtectedBranches(repoRoot, []);
+    console.log(`[${TOOL_NAME}] Protected branches reset to defaults: ${DEFAULT_PROTECTED_BRANCHES.join(', ')}`);
+    process.exitCode = 0;
+    return;
+  }
+
+  throw new Error(`Unknown protect subcommand: ${subcommand}`);
+}
+
 function levenshteinDistance(a, b) {
   const rows = a.length + 1;
   const cols = b.length + 1;
@@ -1093,6 +1239,11 @@ function main() {
 
   if (command === 'copy-prompt') {
     copyPrompt();
+    return;
+  }
+
+  if (command === 'protect') {
+    protect(rest);
     return;
   }
 
