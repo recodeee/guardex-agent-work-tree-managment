@@ -23,6 +23,7 @@ const TEMPLATE_FILES = [
   'scripts/agent-worktree-prune.sh',
   'scripts/agent-file-locks.py',
   'scripts/install-agent-git-hooks.sh',
+  'scripts/openspec/init-plan-workspace.sh',
   'githooks/pre-commit',
 ];
 
@@ -32,6 +33,7 @@ const EXECUTABLE_RELATIVE_PATHS = new Set([
   'scripts/agent-worktree-prune.sh',
   'scripts/agent-file-locks.py',
   'scripts/install-agent-git-hooks.sh',
+  'scripts/openspec/init-plan-workspace.sh',
   '.githooks/pre-commit',
 ]);
 
@@ -86,6 +88,9 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup multi-agent safety in
    bash scripts/agent-branch-start.sh "task" "agent-name"
    python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
    bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+
+5) Optional: create OpenSpec planning workspace:
+   bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
 `;
 
 function usage() {
@@ -289,6 +294,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
     'agent:locks:allow-delete': 'python3 ./scripts/agent-file-locks.py allow-delete',
     'agent:locks:release': 'python3 ./scripts/agent-file-locks.py release',
     'agent:locks:status': 'python3 ./scripts/agent-file-locks.py status',
+    'agent:plan:init': 'bash ./scripts/openspec/init-plan-workspace.sh',
     'agent:safety:setup': `${TOOL_NAME} setup`,
     'agent:safety:scan': `${TOOL_NAME} scan`,
     'agent:safety:fix': `${TOOL_NAME} fix`,

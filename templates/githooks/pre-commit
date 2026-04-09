@@ -10,16 +10,7 @@ if [[ "${ALLOW_COMMIT_ON_PROTECTED_BRANCH:-0}" == "1" ]]; then
   exit 0
 fi
 
-is_vscode_source_control_commit=0
-if [[ -n "${VSCODE_GIT_IPC_HANDLE:-}" ]] || [[ -n "${VSCODE_GIT_ASKPASS_NODE:-}" ]] || [[ -n "${VSCODE_IPC_HOOK_CLI:-}" ]]; then
-  is_vscode_source_control_commit=1
-fi
-
 if [[ "$branch" == "dev" || "$branch" == "main" || "$branch" == "master" ]]; then
-  if [[ "$is_vscode_source_control_commit" == "1" ]]; then
-    exit 0
-  fi
-
   git_dir="$(git rev-parse --git-dir)"
   if [[ -f "$git_dir/MERGE_HEAD" ]]; then
     exit 0

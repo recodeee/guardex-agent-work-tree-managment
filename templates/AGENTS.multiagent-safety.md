@@ -34,4 +34,27 @@
 - Behavior touched
 - Verification commands + results
 - Risks / follow-ups
+
+## OpenSpec Plan Workspace (recommended)
+
+When work needs a durable planning phase, scaffold a plan workspace before implementation:
+
+```bash
+bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
+```
+
+Expected shape:
+
+```text
+openspec/plan/<plan-slug>/
+  summary.md
+  checkpoints.md
+  planner/plan.md
+  planner/tasks.md
+  architect/tasks.md
+  critic/tasks.md
+  executor/tasks.md
+  writer/tasks.md
+  verifier/tasks.md
+```
 <!-- multiagent-safety:END -->

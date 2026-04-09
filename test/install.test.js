@@ -23,10 +23,11 @@ function runNodeWithEnv(args, cwd, extraEnv) {
   });
 }
 
-function runCmd(cmd, args, cwd) {
+function runCmd(cmd, args, cwd, options = {}) {
   return cp.spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
+    env: { ...process.env, ...(options.env || options) },
   });
 }
 
@@ -88,6 +89,7 @@ test('setup provisions workflow files and repo config', () => {
     'scripts/agent-worktree-prune.sh',
     'scripts/agent-file-locks.py',
     'scripts/install-agent-git-hooks.sh',
+    'scripts/openspec/init-plan-workspace.sh',
     '.githooks/pre-commit',
     '.omx/state/agent-file-locks.json',
     'AGENTS.md',
@@ -99,6 +101,7 @@ test('setup provisions workflow files and repo config', () => {
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
   assert.equal(packageJson.scripts['agent:branch:start'], 'bash ./scripts/agent-branch-start.sh');
+  assert.equal(packageJson.scripts['agent:plan:init'], 'bash ./scripts/openspec/init-plan-workspace.sh');
   assert.equal(packageJson.scripts['agent:safety:setup'], 'musafety setup');
   assert.equal(packageJson.scripts['agent:cleanup'], 'bash ./scripts/agent-worktree-prune.sh --base dev');
 
@@ -119,6 +122,65 @@ test('default invocation runs setup', () => {
   const result = runNode([], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(fs.existsSync(path.join(repoDir, '.githooks', 'pre-commit')), true);
+});
+
+test('pre-commit blocks protected branch commits even from VS Code Source Control env', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+
+  const setupResult = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+
+  const hookResult = runCmd(
+    'bash',
+    ['.githooks/pre-commit'],
+    repoDir,
+    {
+      ALLOW_COMMIT_ON_PROTECTED_BRANCH: '0',
+      VSCODE_GIT_IPC_HANDLE: '1',
+      VSCODE_GIT_ASKPASS_NODE: '1',
+      VSCODE_IPC_HOOK_CLI: '1',
+    },
+  );
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /Direct commits on protected branches are blocked/);
+});
+
+test('OpenSpec plan workspace scaffold creates expected role/task structure', () => {
+  const repoDir = initRepo();
+
+  const setupResult = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+
+  const planSlug = 'plan-workspace-smoke';
+  const scaffold = runCmd(
+    'bash',
+    ['scripts/openspec/init-plan-workspace.sh', planSlug],
+    repoDir,
+  );
+  assert.equal(scaffold.status, 0, scaffold.stderr || scaffold.stdout);
+
+  const planDir = path.join(repoDir, 'openspec', 'plan', planSlug);
+  const expected = [
+    'summary.md',
+    'checkpoints.md',
+    'planner/plan.md',
+    'planner/tasks.md',
+    'architect/tasks.md',
+    'critic/tasks.md',
+    'executor/tasks.md',
+    'writer/tasks.md',
+    'verifier/tasks.md',
+  ];
+  for (const rel of expected) {
+    assert.equal(fs.existsSync(path.join(planDir, rel)), true, `${rel} missing`);
+  }
+
+  const plannerTasks = fs.readFileSync(path.join(planDir, 'planner', 'tasks.md'), 'utf8');
+  assert.match(plannerTasks, /## 1\. Spec/);
+  assert.match(plannerTasks, /## 2\. Tests/);
+  assert.match(plannerTasks, /## 3\. Implementation/);
+  assert.match(plannerTasks, /## 4\. Checkpoints/);
 });
 
 test('validate blocks unapproved deletions until allow-delete is set', () => {

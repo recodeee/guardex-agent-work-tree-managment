@@ -19,6 +19,9 @@ confusing ownership.
 
 The dashboard above is the exact kind of parallel workflow this tool is built for.
 
+It also includes an OpenSpec planning scaffold script so plan-mode workspaces
+can be bootstrapped consistently across repos.
+
 ## Install
 
 ```sh
@@ -102,6 +105,7 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
 musafety setup [--target <path>] [--dry-run] [--yes-global-install|--no-global-install]
 musafety copy-prompt
 bash scripts/agent-worktree-prune.sh --base dev   # manual stale worktree cleanup
+bash scripts/openspec/init-plan-workspace.sh <plan-slug>   # optional OpenSpec plan scaffold
 ```
 
 No command defaults to `musafety setup`.
@@ -121,6 +125,7 @@ musafety scan [--target <path>] [--json]
 ## What is protected
 
 - direct commits to protected branches (`dev`, `main`, `master`)
+- protected-branch commits are blocked regardless of commit client (including VS Code Source Control)
 - overlapping file ownership between agents
 - unapproved deletions of claimed files
 - risky stale/missing lock state
@@ -134,6 +139,7 @@ scripts/agent-branch-finish.sh
 scripts/agent-worktree-prune.sh
 scripts/agent-file-locks.py
 scripts/install-agent-git-hooks.sh
+scripts/openspec/init-plan-workspace.sh
 .githooks/pre-commit
 .omx/state/agent-file-locks.json
 ```
