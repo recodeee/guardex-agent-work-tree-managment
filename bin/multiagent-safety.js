@@ -86,6 +86,7 @@ const SUGGESTIBLE_COMMANDS = [
   'doctor',
   'report',
   'copy-prompt',
+  'copy-commands',
   'protect',
   'sync',
   'release',
@@ -102,6 +103,7 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['doctor', 'Repair safety setup drift, then verify repo safety'],
   ['report', 'Generate security/safety reports (for example: OpenSSF scorecard)'],
   ['copy-prompt', 'Print the AI-ready setup checklist'],
+  ['copy-commands', 'Print setup checklist as executable commands only'],
   ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
   ['sync', 'Check or sync agent branches with origin/<base>'],
   ['install', 'Install templates/locks/hooks without running full setup (supports --no-gitignore)'],
@@ -143,6 +145,18 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup multi-agent safety in
 7) Optional: sync your current agent branch with latest dev:
    musafety sync --check
    musafety sync
+`;
+
+const AI_SETUP_COMMANDS = `npm i -g musafety
+musafety setup
+musafety doctor
+bash scripts/agent-branch-start.sh "task" "agent-name"
+python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
+bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
+musafety protect add release staging
+musafety sync --check
+musafety sync
 `;
 
 const SCORECARD_RISK_BY_CHECK = {
@@ -2062,6 +2076,11 @@ function copyPrompt() {
   process.exitCode = 0;
 }
 
+function copyCommands() {
+  process.stdout.write(AI_SETUP_COMMANDS);
+  process.exitCode = 0;
+}
+
 function sync(rawArgs) {
   const options = parseSyncArgs(rawArgs);
   const repoRoot = resolveRepoRoot(options.target);
@@ -2392,6 +2411,11 @@ function main() {
 
   if (command === 'copy-prompt') {
     copyPrompt();
+    return;
+  }
+
+  if (command === 'copy-commands') {
+    copyCommands();
     return;
   }
 
