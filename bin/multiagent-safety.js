@@ -71,11 +71,14 @@ const COMMAND_TYPO_ALIASES = new Map([
   ['relase', 'release'],
   ['setpu', 'setup'],
   ['intsall', 'install'],
+  ['docter', 'doctor'],
+  ['doctro', 'doctor'],
   ['scna', 'scan'],
 ]);
 const SUGGESTIBLE_COMMANDS = [
   'status',
   'setup',
+  'doctor',
   'copy-prompt',
   'protect',
   'sync',
@@ -102,8 +105,7 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup multi-agent safety in
      - n = skip global installs
 
 3) If setup reports warnings/errors, repair + re-check:
-   musafety fix
-   musafety scan
+   musafety doctor
 
 4) Confirm next safe agent workflow commands:
    bash scripts/agent-branch-start.sh "task" "agent-name"
@@ -160,6 +162,7 @@ USAGE
 COMMANDS
   status             Show musafety CLI + service health without modifying files
   setup              Install + repair guardrails in a git repo (supports --no-gitignore)
+  doctor             Repair safety setup drift, then verify repo safety
   copy-prompt        Print the AI-ready setup checklist
   protect            Manage protected branches (list/add/remove/set/reset)
   sync               Check or sync agent branches with origin/<base>
@@ -379,6 +382,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
     'agent:safety:setup': `${TOOL_NAME} setup`,
     'agent:safety:scan': `${TOOL_NAME} scan`,
     'agent:safety:fix': `${TOOL_NAME} fix`,
+    'agent:safety:doctor': `${TOOL_NAME} doctor`,
   };
 
   pkg.scripts = pkg.scripts || {};
@@ -1384,6 +1388,59 @@ function scan(rawArgs) {
   setExitCodeFromScan(result);
 }
 
+function doctor(rawArgs) {
+  const options = parseCommonArgs(rawArgs, {
+    target: process.cwd(),
+    dropStaleLocks: true,
+    skipAgents: false,
+    skipPackageJson: false,
+    skipGitignore: false,
+    dryRun: false,
+    json: false,
+  });
+
+  const fixPayload = runFixInternal(options);
+  const scanResult = runScanInternal({ target: options.target, json: false });
+  const musafe = scanResult.errors === 0 && scanResult.warnings === 0;
+
+  if (options.json) {
+    process.stdout.write(
+      JSON.stringify(
+        {
+          repoRoot: scanResult.repoRoot,
+          branch: scanResult.branch,
+          musafe,
+          fix: {
+            operations: fixPayload.operations,
+            hookResult: fixPayload.hookResult,
+            dryRun: Boolean(options.dryRun),
+          },
+          scan: {
+            errors: scanResult.errors,
+            warnings: scanResult.warnings,
+            findings: scanResult.findings,
+          },
+        },
+        null,
+        2,
+      ) + '\n',
+    );
+    setExitCodeFromScan(scanResult);
+    return;
+  }
+
+  printOperations('Doctor/fix', fixPayload, options.dryRun);
+  printScanResult(scanResult, false);
+  if (musafe) {
+    console.log(`[${TOOL_NAME}] ✅ Repo is correctly musafe.`);
+  } else {
+    console.log(
+      `[${TOOL_NAME}] ⚠️ Repo is not fully musafe yet (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
+    );
+  }
+  setExitCodeFromScan(scanResult);
+}
+
 function setup(rawArgs) {
   const options = parseCommonArgs(rawArgs, {
     target: process.cwd(),
@@ -1819,6 +1876,11 @@ function main() {
 
   if (command === 'setup') {
     setup(rest);
+    return;
+  }
+
+  if (command === 'doctor') {
+    doctor(rest);
     return;
   }
 

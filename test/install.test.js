@@ -624,6 +624,44 @@ test('fix repairs stale lock issues so scan becomes clean', () => {
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
+test('doctor repairs setup drift and confirms repo is musafe', () => {
+  const repoDir = initRepo();
+
+  let result = runNode(['setup', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  // Simulate broken setup + stale lock.
+  fs.rmSync(path.join(repoDir, 'scripts', 'agent-branch-start.sh'));
+  result = runCmd('git', ['config', 'core.hooksPath', '.git/hooks'], repoDir);
+  assert.equal(result.status, 0, result.stderr);
+
+  const lockPath = path.join(repoDir, '.omx', 'state', 'agent-file-locks.json');
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify(
+      {
+        locks: {
+          'missing/file.ts': {
+            branch: 'agent/non-existent',
+            claimed_at: '2026-01-01T00:00:00Z',
+            allow_delete: false,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  result = runNode(['doctor', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Doctor\/fix/);
+  assert.match(result.stdout, /Repo is correctly musafe/);
+
+  const scanAfter = runNode(['scan', '--target', repoDir], repoDir);
+  assert.equal(scanAfter.status, 0, scanAfter.stderr || scanAfter.stdout);
+});
+
 test('copy-prompt outputs AI setup instructions', () => {
   const repoDir = initRepo();
   const result = runNode(['copy-prompt'], repoDir);

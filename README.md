@@ -99,8 +99,7 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
      - n = skip global installs
 
 3) If setup reports warnings/errors, repair + re-check:
-   musafety fix
-   musafety scan
+   musafety doctor
 
 4) Confirm next safe agent workflow commands:
    bash scripts/agent-branch-start.sh "task" "agent-name"
@@ -123,6 +122,7 @@ Use this exact checklist to setup multi-agent safety in this repository for Code
 ```sh
 musafety status [--target <path>] [--json]
 musafety setup [--target <path>] [--dry-run] [--yes-global-install|--no-global-install] [--no-gitignore]
+musafety doctor [--target <path>] [--dry-run] [--json] [--keep-stale-locks] [--no-gitignore]
 musafety copy-prompt
 musafety protect list [--target <path>]
 musafety protect add <branch...> [--target <path>]
