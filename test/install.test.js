@@ -189,6 +189,13 @@ test('default invocation runs non-mutating status output', () => {
   assert.match(result.stdout, /\[musafety\] CLI:/);
   assert.match(result.stdout, /\[musafety\] Global services:/);
   assert.match(result.stdout, /\[musafety\] Repo safety service:/);
+  assert.match(result.stdout, /●/);
+  const serviceIdx = result.stdout.indexOf('[musafety] Repo safety service:');
+  const repoIdx = result.stdout.indexOf('[musafety] Repo:');
+  const branchIdx = result.stdout.indexOf('[musafety] Branch:');
+  assert.equal(serviceIdx >= 0, true);
+  assert.equal(repoIdx > serviceIdx, true);
+  assert.equal(branchIdx > repoIdx, true);
   assert.equal(fs.existsSync(path.join(repoDir, '.githooks', 'pre-commit')), false);
 });
 
@@ -199,7 +206,7 @@ test('default invocation outside git repo reports inactive repo service', () => 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /\[musafety\] CLI:/);
   assert.match(result.stdout, /\[musafety\] Global services:/);
-  assert.match(result.stdout, /Repo safety service: inactive/);
+  assert.match(result.stdout, /Repo safety service: .*inactive/);
 });
 
 test('status --json returns cli, services, and repo summary', () => {

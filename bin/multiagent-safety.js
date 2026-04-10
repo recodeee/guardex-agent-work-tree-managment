@@ -125,6 +125,27 @@ function runtimeVersion() {
   return `${packageJson.name}/${packageJson.version} ${process.platform}-${process.arch} node-${process.version}`;
 }
 
+function supportsAnsiColors() {
+  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== 'dumb';
+}
+
+function colorize(text, colorCode) {
+  if (!supportsAnsiColors()) {
+    return text;
+  }
+  return `\u001B[${colorCode}m${text}\u001B[0m`;
+}
+
+function statusDot(status) {
+  if (status === 'active') {
+    return colorize('●', '32'); // green
+  }
+  if (status === 'inactive') {
+    return colorize('●', '31'); // red
+  }
+  return colorize('●', '33'); // yellow for degraded/unknown
+}
+
 function usage(options = {}) {
   const { outsideGitRepo = false } = options;
 
@@ -1287,25 +1308,27 @@ function status(rawArgs) {
 
   console.log(`[${TOOL_NAME}] Global services:`);
   for (const service of services) {
-    console.log(`  - ${service.name}: ${service.status}`);
+    console.log(`  - ${statusDot(service.status)} ${service.name}: ${service.status}`);
   }
 
   if (!scanResult) {
-    console.log(`[${TOOL_NAME}] Repo safety service: inactive (no git repository at target).`);
+    console.log(
+      `[${TOOL_NAME}] Repo safety service: ${statusDot('inactive')} inactive (no git repository at target).`,
+    );
     process.exitCode = 0;
     return;
   }
 
-  console.log(`[${TOOL_NAME}] Repo: ${scanResult.repoRoot}`);
-  console.log(`[${TOOL_NAME}] Branch: ${scanResult.branch}`);
   if (scanResult.errors === 0 && scanResult.warnings === 0) {
-    console.log(`[${TOOL_NAME}] Repo safety service: active.`);
+    console.log(`[${TOOL_NAME}] Repo safety service: ${statusDot('active')} active.`);
   } else {
     console.log(
-      `[${TOOL_NAME}] Repo safety service: degraded (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
+      `[${TOOL_NAME}] Repo safety service: ${statusDot('degraded')} degraded (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
     );
     console.log(`[${TOOL_NAME}] Run '${TOOL_NAME} scan' for detailed findings.`);
   }
+  console.log(`[${TOOL_NAME}] Repo: ${scanResult.repoRoot}`);
+  console.log(`[${TOOL_NAME}] Branch: ${scanResult.branch}`);
 
   process.exitCode = 0;
 }
