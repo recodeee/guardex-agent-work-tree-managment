@@ -90,6 +90,21 @@ const SUGGESTIBLE_COMMANDS = [
   'help',
   'version',
 ];
+const CLI_COMMAND_DESCRIPTIONS = [
+  ['status', 'Show musafety CLI + service health without modifying files'],
+  ['setup', 'Install + repair guardrails in a git repo (supports --no-gitignore)'],
+  ['doctor', 'Repair safety setup drift, then verify repo safety'],
+  ['copy-prompt', 'Print the AI-ready setup checklist'],
+  ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
+  ['sync', 'Check or sync agent branches with origin/<base>'],
+  ['install', 'Install templates/locks/hooks without running full setup (supports --no-gitignore)'],
+  ['fix', 'Repair broken or missing guardrail files/config (supports --no-gitignore)'],
+  ['scan', 'Report safety issues and exit non-zero on findings'],
+  ['print-agents-snippet', 'Print the AGENTS.md snippet template'],
+  ['release', 'Publish musafety from maintainer release repo'],
+  ['help', 'Show this help output'],
+  ['version', 'Print musafety version'],
+];
 
 const AI_SETUP_PROMPT = `Use this exact checklist to setup multi-agent safety in this repository for Codex or Claude.
 
@@ -148,6 +163,52 @@ function statusDot(status) {
   return colorize('●', '33'); // yellow for degraded/unknown
 }
 
+function commandCatalogLines(indent = '  ') {
+  const maxCommandLength = CLI_COMMAND_DESCRIPTIONS.reduce(
+    (max, [command]) => Math.max(max, command.length),
+    0,
+  );
+  return CLI_COMMAND_DESCRIPTIONS.map(
+    ([command, description]) => `${indent}${command.padEnd(maxCommandLength + 2)}${description}`,
+  );
+}
+
+function printToolLogsSummary() {
+  const usageLine = `    $ ${TOOL_NAME} <command> [options]`;
+  const commandDetails = commandCatalogLines('    ');
+
+  if (!supportsAnsiColors()) {
+    console.log('musafety-tools logs:');
+    console.log('  USAGE');
+    console.log(usageLine);
+    console.log('  COMMANDS');
+    for (const line of commandDetails) {
+      console.log(line);
+    }
+    return;
+  }
+
+  const title = colorize('musafety-tools logs', '1;36');
+  const usageHeader = colorize('USAGE', '1');
+  const commandsHeader = colorize('COMMANDS', '1');
+  const pipe = colorize('│', '90');
+  const tee = colorize('├', '90');
+  const corner = colorize('└', '90');
+
+  console.log(`${title}:`);
+  console.log(`  ${tee}─ ${usageHeader}`);
+  console.log(`  ${pipe}${usageLine}`);
+  console.log(`  ${tee}─ ${commandsHeader}`);
+  for (const line of commandDetails) {
+    if (!line) {
+      console.log(`  ${pipe}`);
+      continue;
+    }
+    console.log(`  ${pipe}${line.slice(2)}`);
+  }
+  console.log(`  ${corner}─ ${colorize(`Try '${TOOL_NAME} doctor' for one-step repair + verification.`, '2')}`);
+}
+
 function usage(options = {}) {
   const { outsideGitRepo = false } = options;
 
@@ -157,22 +218,10 @@ VERSION
   ${runtimeVersion()}
 
 USAGE
-  $ ${TOOL_NAME} [COMMAND]
+  $ ${TOOL_NAME} <command> [options]
 
 COMMANDS
-  status             Show musafety CLI + service health without modifying files
-  setup              Install + repair guardrails in a git repo (supports --no-gitignore)
-  doctor             Repair safety setup drift, then verify repo safety
-  copy-prompt        Print the AI-ready setup checklist
-  protect            Manage protected branches (list/add/remove/set/reset)
-  sync               Check or sync agent branches with origin/<base>
-  install            Install templates/locks/hooks without running full setup (supports --no-gitignore)
-  fix                Repair broken or missing guardrail files/config (supports --no-gitignore)
-  scan               Report safety issues and exit non-zero on findings
-  print-agents-snippet  Print the AGENTS.md snippet template
-  release            Publish musafety from maintainer release repo
-  help               Show this help output
-  version            Print musafety version
+${commandCatalogLines().join('\n')}
 
 NOTES
   - Running ${TOOL_NAME} with no command defaults to: ${TOOL_NAME} status
@@ -1333,6 +1382,7 @@ function status(rawArgs) {
   }
   console.log(`[${TOOL_NAME}] Repo: ${scanResult.repoRoot}`);
   console.log(`[${TOOL_NAME}] Branch: ${scanResult.branch}`);
+  printToolLogsSummary();
 
   process.exitCode = 0;
 }

@@ -193,9 +193,14 @@ test('default invocation runs non-mutating status output', () => {
   const serviceIdx = result.stdout.indexOf('[musafety] Repo safety service:');
   const repoIdx = result.stdout.indexOf('[musafety] Repo:');
   const branchIdx = result.stdout.indexOf('[musafety] Branch:');
+  const toolsIdx = result.stdout.indexOf('musafety-tools logs:');
   assert.equal(serviceIdx >= 0, true);
   assert.equal(repoIdx > serviceIdx, true);
   assert.equal(branchIdx > repoIdx, true);
+  assert.equal(toolsIdx > branchIdx, true);
+  assert.match(result.stdout, /musafety-tools logs:/);
+  assert.match(result.stdout, /USAGE\n\s+\$ musafety <command> \[options\]/);
+  assert.match(result.stdout, /COMMANDS\n\s+status\s+Show musafety CLI \+ service health without modifying files/);
   assert.equal(fs.existsSync(path.join(repoDir, '.githooks', 'pre-commit')), false);
 });
 
