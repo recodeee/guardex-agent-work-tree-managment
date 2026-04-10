@@ -1,10 +1,30 @@
-# musafety (MULTI AGENTS SAFETY PROTCOL)
+<div align="center">
 
-[![npm version](https://img.shields.io/npm/v/musafety?color=cb3837&logo=npm)](https://www.npmjs.com/package/musafety)
-[![CI](https://github.com/recodeecom/multiagent-safety/actions/workflows/ci.yml/badge.svg)](https://github.com/recodeecom/multiagent-safety/actions/workflows/ci.yml)
+<h1>musafety</h1>
+<p><strong>Multi-Agent Safety Protocol for Git Repositories</strong></p>
+<p>Hardened guardrails for parallel AI-agent workflows (Codex, Claude, OMX).</p>
+
+<p>
+  <a href="https://www.npmjs.com/package/musafety">npm package</a>
+  ·
+  <a href="#fast-setup-recommended">quick start</a>
+  ·
+  <a href="#workflow-protocol-screenshots">workflow visuals</a>
+  ·
+  <a href="./SECURITY.md">security</a>
+</p>
+
+[![npm version](https://img.shields.io/npm/v/musafety?style=flat-square&color=cb3837&logo=npm)](https://www.npmjs.com/package/musafety)
+[![CI](https://img.shields.io/github/actions/workflow/status/recodeecom/multiagent-safety/ci.yml?style=flat-square&label=ci)](https://github.com/recodeecom/multiagent-safety/actions/workflows/ci.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/recodeecom/multiagent-safety/badge)](https://securityscorecards.dev/viewer/?uri=github.com/recodeecom/multiagent-safety)
+[![Security policy](https://img.shields.io/badge/security-policy-0ea5e9?style=flat-square)](./SECURITY.md)
 
-Simple, hardened multi-agent safety setup for any git repo.
+</div>
+
+```bash
+npm i -g musafety
+musafety setup
+```
 
 > [!WARNING]
 > Not affiliated with OpenAI or Codex. Not an official tool.
