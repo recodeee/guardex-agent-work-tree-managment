@@ -1,14 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TASK_NAME="${1:-task}"
-AGENT_NAME="${2:-agent}"
-BASE_BRANCH="${3:-dev}"
+TASK_NAME="${MUSAFETY_TASK_NAME:-task}"
+AGENT_NAME="${MUSAFETY_AGENT_NAME:-agent}"
+BASE_BRANCH="${MUSAFETY_BASE_BRANCH:-dev}"
 CODEX_BIN="${MUSAFETY_CODEX_BIN:-codex}"
 
-if [[ $# -ge 1 ]]; then shift; fi
-if [[ $# -ge 1 ]]; then shift; fi
-if [[ $# -ge 1 ]]; then shift; fi
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --task)
+      TASK_NAME="${2:-$TASK_NAME}"
+      shift 2
+      ;;
+    --agent)
+      AGENT_NAME="${2:-$AGENT_NAME}"
+      shift 2
+      ;;
+    --base)
+      BASE_BRANCH="${2:-$BASE_BRANCH}"
+      shift 2
+      ;;
+    --codex-bin)
+      CODEX_BIN="${2:-$CODEX_BIN}"
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      break
+      ;;
+    *)
+      TASK_NAME="$1"
+      shift
+      if [[ $# -gt 0 && "${1:-}" != -* ]]; then
+        AGENT_NAME="$1"
+        shift
+      fi
+      if [[ $# -gt 0 && "${1:-}" != -* ]]; then
+        BASE_BRANCH="$1"
+        shift
+      fi
+      break
+      ;;
+  esac
+done
 
 if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
   echo "[codex-agent] Missing Codex CLI command: $CODEX_BIN" >&2

@@ -1266,7 +1266,7 @@ function maybeSelfUpdateBeforeStatus() {
     ? autoApproval
     : promptYesNo(
       `Update now? (${NPM_BIN} i -g ${packageJson.name}@latest)`,
-      true,
+      false,
     );
 
   if (!shouldUpdate) {
