@@ -325,6 +325,57 @@ test('doctor on protected main auto-runs in a sandbox branch/worktree', () => {
   assert.equal(currentBranch.stdout.trim(), 'main');
 });
 
+test('doctor on protected main syncs repaired stale lock state back to base workspace', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+  attachOriginRemoteForBranch(repoDir, 'main');
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('git', ['add', '.'], repoDir);
+  assert.equal(result.status, 0, result.stderr);
+  result = runCmd('git', ['commit', '-m', 'apply gx setup'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const lockPath = path.join(repoDir, '.omx', 'state', 'agent-file-locks.json');
+  fs.writeFileSync(
+    lockPath,
+    JSON.stringify(
+      {
+        locks: {
+          'package.json': {
+            branch: 'agent/non-existent',
+            claimed_at: '2026-01-01T00:00:00Z',
+            allow_delete: false,
+          },
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+
+  const scanBefore = runNode(['scan', '--target', repoDir], repoDir);
+  assert.equal(scanBefore.status, 1, scanBefore.stderr || scanBefore.stdout);
+  assert.match(scanBefore.stdout, /stale-branch-lock/);
+
+  result = runNode(['doctor', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /doctor detected protected branch 'main'/);
+  assert.match(result.stdout, /Synced repaired lock registry back to protected branch workspace/);
+
+  const lockState = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  assert.deepEqual(lockState.locks, {});
+
+  const scanAfter = runNode(['scan', '--target', repoDir], repoDir);
+  assert.equal(scanAfter.status, 0, scanAfter.stderr || scanAfter.stdout);
+});
+
 test('setup pre-commit blocks codex session commits on non-agent branches by default', () => {
   const repoDir = initRepo();
 
@@ -1353,7 +1404,7 @@ test('fix repairs stale lock issues so scan becomes clean', () => {
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('doctor repairs setup drift and confirms repo is musafe', () => {
+test('doctor repairs setup drift and confirms repo is safe', () => {
   const repoDir = initRepo();
 
   let result = runNode(['setup', '--target', repoDir], repoDir);
@@ -1386,7 +1437,7 @@ test('doctor repairs setup drift and confirms repo is musafe', () => {
   result = runNode(['doctor', '--target', repoDir], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /Doctor\/fix/);
-  assert.match(result.stdout, /Repo is correctly musafe/);
+  assert.match(result.stdout, /Repo is fully safe/);
 
   const repairedHook = fs.readFileSync(path.join(repoDir, '.githooks', 'pre-commit'), 'utf8');
   assert.match(repairedHook, /AGENTS\.md\|\.gitignore/);

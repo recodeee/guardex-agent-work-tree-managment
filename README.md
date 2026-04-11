@@ -292,6 +292,7 @@ and asks `[y/N]` whether to update immediately (default is `N`).
 - Non-interactive setup: skips global installs by default; use `--yes-global-install` to force.
 - In already-initialized repos, `setup` / `install` / `fix` block writes on protected `main` by default; start an agent branch first. Use `--allow-protected-base-write` only for emergency in-place maintenance.
 - `gx doctor` on protected `main` auto-starts an isolated `agent/gx/...-gx-doctor` worktree branch and applies repairs there.
+  It also syncs repaired `.omx/state/agent-file-locks.json` back to your protected workspace so stale-lock warnings clear immediately.
 - `gx setup` and `gx doctor` always refresh `.githooks/pre-commit` from templates, so Codex sub-branch enforcement stays repaired.
 - `scripts/codex-agent.sh` now auto-runs finish automation after a Codex session when `origin` exists:
   auto-commit changed files, run PR/merge automation, and keep merged agent branches/worktrees by default.

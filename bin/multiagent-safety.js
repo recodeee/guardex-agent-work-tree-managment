@@ -811,8 +811,59 @@ function runDoctorInSandbox(options, blocked) {
     throw nestedResult.error;
   }
 
+  let lockSyncResult = {
+    status: 'skipped',
+    note: 'sandbox doctor did not complete successfully',
+  };
+  if (nestedResult.status === 0) {
+    const sandboxLockPath = path.join(metadata.worktreePath, LOCK_FILE_RELATIVE);
+    const baseLockPath = path.join(blocked.repoRoot, LOCK_FILE_RELATIVE);
+    if (!fs.existsSync(sandboxLockPath)) {
+      lockSyncResult = {
+        status: 'skipped',
+        note: `${LOCK_FILE_RELATIVE} missing in sandbox worktree`,
+      };
+    } else {
+      const sourceContent = fs.readFileSync(sandboxLockPath, 'utf8');
+      const destinationContent = fs.existsSync(baseLockPath) ? fs.readFileSync(baseLockPath, 'utf8') : '';
+      if (sourceContent === destinationContent) {
+        lockSyncResult = {
+          status: 'unchanged',
+          note: `${LOCK_FILE_RELATIVE} already in sync`,
+        };
+      } else {
+        fs.mkdirSync(path.dirname(baseLockPath), { recursive: true });
+        fs.writeFileSync(baseLockPath, sourceContent, 'utf8');
+        lockSyncResult = {
+          status: 'synced',
+          note: `${LOCK_FILE_RELATIVE} synced from sandbox`,
+        };
+      }
+    }
+  }
+
   if (options.json) {
-    if (nestedResult.stdout) process.stdout.write(nestedResult.stdout);
+    if (nestedResult.stdout) {
+      if (nestedResult.status === 0) {
+        try {
+          const parsed = JSON.parse(nestedResult.stdout);
+          process.stdout.write(
+            JSON.stringify(
+              {
+                ...parsed,
+                sandboxLockSync: lockSyncResult,
+              },
+              null,
+              2,
+            ) + '\n',
+          );
+        } catch {
+          process.stdout.write(nestedResult.stdout);
+        }
+      } else {
+        process.stdout.write(nestedResult.stdout);
+      }
+    }
     if (nestedResult.stderr) process.stderr.write(nestedResult.stderr);
   } else {
     console.log(
@@ -823,6 +874,17 @@ function runDoctorInSandbox(options, blocked) {
     if (startResult.stderr) process.stderr.write(startResult.stderr);
     if (nestedResult.stdout) process.stdout.write(nestedResult.stdout);
     if (nestedResult.stderr) process.stderr.write(nestedResult.stderr);
+    if (nestedResult.status === 0) {
+      if (lockSyncResult.status === 'synced') {
+        console.log(
+          `[${TOOL_NAME}] Synced repaired lock registry back to protected branch workspace (${LOCK_FILE_RELATIVE}).`,
+        );
+      } else if (lockSyncResult.status === 'unchanged') {
+        console.log(`[${TOOL_NAME}] Lock registry already synced in protected branch workspace.`);
+      } else {
+        console.log(`[${TOOL_NAME}] Lock registry sync skipped: ${lockSyncResult.note}.`);
+      }
+    }
   }
 
   if (typeof nestedResult.status === 'number') {
@@ -2093,7 +2155,8 @@ function doctor(rawArgs) {
   assertProtectedMainWriteAllowed(options, 'doctor');
   const fixPayload = runFixInternal(options);
   const scanResult = runScanInternal({ target: options.target, json: false });
-  const musafe = scanResult.errors === 0 && scanResult.warnings === 0;
+  const safe = scanResult.errors === 0 && scanResult.warnings === 0;
+  const musafe = safe;
 
   if (options.json) {
     process.stdout.write(
@@ -2101,6 +2164,7 @@ function doctor(rawArgs) {
         {
           repoRoot: scanResult.repoRoot,
           branch: scanResult.branch,
+          safe,
           musafe,
           fix: {
             operations: fixPayload.operations,
@@ -2123,11 +2187,11 @@ function doctor(rawArgs) {
 
   printOperations('Doctor/fix', fixPayload, options.dryRun);
   printScanResult(scanResult, false);
-  if (musafe) {
-    console.log(`[${TOOL_NAME}] ✅ Repo is correctly musafe.`);
+  if (safe) {
+    console.log(`[${TOOL_NAME}] ✅ Repo is fully safe.`);
   } else {
     console.log(
-      `[${TOOL_NAME}] ⚠️ Repo is not fully musafe yet (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
+      `[${TOOL_NAME}] ⚠️ Repo is not fully safe yet (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
     );
   }
   setExitCodeFromScan(scanResult);
