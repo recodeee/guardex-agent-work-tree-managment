@@ -36,7 +36,7 @@ gx protect add release staging
 Links:
 
 - GitHub: https://github.com/recodeecom/multiagent-safety
-- npm: https://www.npmjs.com/package/@recodeecom/guardex
+- npm: https://www.npmjs.com/package/@imdeadpool/guardex
 
 If you try it, I’d love feedback on team workflows and edge cases.
 
@@ -58,4 +58,4 @@ gx setup
 ```
 
 GitHub: https://github.com/recodeecom/multiagent-safety  
-npm: https://www.npmjs.com/package/@recodeecom/guardex
+npm: https://www.npmjs.com/package/@imdeadpool/guardex
