@@ -23,3 +23,4 @@ npm pack --dry-run
 - Keep `main` green (CI passing)
 - Prefer trusted publishing (`npm publish --provenance`)
 - Use a clean working tree and tag-based releases when possible
+- When version changes, update `README.md` release notes in the same PR/commit

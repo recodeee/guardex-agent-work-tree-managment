@@ -28,6 +28,7 @@ This AGENTS.md is the top-level operating contract for this repository.
 - Prefer deletion over addition.
 - Reuse existing patterns before introducing new abstractions.
 - No new dependencies without explicit request.
+- When publishing or bumping a version, update release notes in the same change (`README.md` release notes section and the release body when tagging).
 - Keep diffs small, reviewable, and reversible.
 - Run lint/typecheck/tests/static analysis after changes.
 - Final reports must include: changed files, simplifications made, and remaining risks.

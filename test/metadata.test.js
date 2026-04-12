@@ -5,6 +5,11 @@ const path = require('node:path');
 
 const repoRoot = path.resolve(__dirname, '..');
 const packageJsonPath = path.join(repoRoot, 'package.json');
+const readmePath = path.join(repoRoot, 'README.md');
+
+function escapeRegexLiteral(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 test('package manifest includes repository and support metadata', () => {
   const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
@@ -24,6 +29,17 @@ test('release workflow publishes with provenance in CI', () => {
   const workflowPath = path.join(repoRoot, '.github', 'workflows', 'release.yml');
   const workflow = fs.readFileSync(workflowPath, 'utf8');
   assert.match(workflow, /npm publish --provenance --access public/);
+});
+
+test('README release notes include current package version', () => {
+  const pkg = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  const headingPattern = new RegExp(`^###\\s+v${escapeRegexLiteral(pkg.version)}\\b`, 'm');
+  assert.match(
+    readme,
+    headingPattern,
+    `README release notes must include heading for v${pkg.version}`,
+  );
 });
 
 test('security workflows are present and use pinned GitHub Actions SHAs', () => {

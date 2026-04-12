@@ -18,6 +18,7 @@
 - If merge/rebase conflicts block auto-finish, run a conflict-resolution review pass in that sandbox branch, then rerun `agent-branch-finish.sh --via-pr` until merged.
 - Completion is not valid until these are true: commit exists on the agent branch, branch is pushed to `origin`, and PR/merge status is produced by `agent-branch-finish.sh` or `codex-agent`.
 - Per-message loop is mandatory: for every new user message/task, start a fresh agent branch/worktree, claim ownership locks, implement and verify, finish via PR/merge cleanup, then repeat for the next message/task.
+- If the change publishes or bumps a version, the same change must also update release notes/changelog entries.
 
 1. Explicit ownership before edits
 

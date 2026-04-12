@@ -208,6 +208,20 @@ npm pack --dry-run
 
 ## Release notes
 
+### v5.0.2
+
+- Auto-closes Codex sandbox branches through PR workflow and keeps merged branch/worktree sandboxes for explicit cleanup via `gx cleanup`.
+- Runs `gx doctor` repairs from a sandbox when `main` is protected.
+- Allows tightly guarded Codex-only commits for `AGENTS.md` / `.gitignore` on protected branches.
+- Advanced package version to keep npm publishing unblocked.
+
+### v5.0.0
+
+- Rebranded the CLI to **GuardeX** with `gx`-first command UX.
+- Published under scoped package name `@imdeadpool/guardex` to avoid npm name collisions.
+- Enforced a repeatable per-message agent branch lifecycle in setup/init flows.
+- Added codex-auth-aware sandbox branch naming support.
+
 ### v0.4.6
 
 - Added repository metadata (`repository`, `bugs`, `homepage`, `funding`) in package manifest.
