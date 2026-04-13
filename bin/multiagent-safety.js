@@ -1069,6 +1069,19 @@ function isCommandAvailable(commandName) {
   return run('which', [commandName]).status === 0;
 }
 
+function extractAgentBranchFinishPrUrl(output) {
+  const match = String(output || '').match(/\[agent-branch-finish\] PR:\s*(\S+)/);
+  return match ? match[1] : '';
+}
+
+function doctorFinishFlowIsPending(output) {
+  return (
+    /\[agent-branch-finish\] PR merge not completed yet; leaving PR open\./.test(output) ||
+    /\[agent-branch-finish\] Merge pending review\/check policy\. Branch cleanup skipped for now\./.test(output) ||
+    /\[agent-branch-finish\] PR auto-merge enabled; waiting for required checks\/reviews\./.test(output)
+  );
+}
+
 function finishDoctorSandboxBranch(blocked, metadata) {
   const finishScript = path.join(metadata.worktreePath, 'scripts', 'agent-branch-finish.sh');
   if (!fs.existsSync(finishScript)) {
@@ -1117,6 +1130,17 @@ function finishDoctorSandboxBranch(blocked, metadata) {
     return {
       status: 'failed',
       note: 'doctor sandbox finish flow failed',
+      stdout: finishResult.stdout || '',
+      stderr: finishResult.stderr || '',
+    };
+  }
+
+  const combinedOutput = `${finishResult.stdout || ''}\n${finishResult.stderr || ''}`;
+  if (doctorFinishFlowIsPending(combinedOutput)) {
+    return {
+      status: 'pending',
+      note: 'PR created and waiting for merge policy/checks',
+      prUrl: extractAgentBranchFinishPrUrl(combinedOutput),
       stdout: finishResult.stdout || '',
       stderr: finishResult.stderr || '',
     };
@@ -1264,6 +1288,15 @@ function runDoctorInSandbox(options, blocked) {
 
       if (finishResult.status === 'completed') {
         console.log(`[${TOOL_NAME}] Auto-finish flow completed for sandbox branch '${metadata.branch}'.`);
+        if (finishResult.stdout) process.stdout.write(finishResult.stdout);
+        if (finishResult.stderr) process.stderr.write(finishResult.stderr);
+      } else if (finishResult.status === 'pending') {
+        console.log(
+          `[${TOOL_NAME}] Auto-finish pending for sandbox branch '${metadata.branch}': ${finishResult.note}.`,
+        );
+        if (finishResult.prUrl) {
+          console.log(`[${TOOL_NAME}] PR: ${finishResult.prUrl}`);
+        }
         if (finishResult.stdout) process.stdout.write(finishResult.stdout);
         if (finishResult.stderr) process.stderr.write(finishResult.stderr);
       } else if (finishResult.status === 'failed') {

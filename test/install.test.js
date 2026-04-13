@@ -533,6 +533,77 @@ exit 1
   assert.equal(rootStatus.stdout.trim(), '', 'protected main checkout should stay clean');
 });
 
+test('doctor on protected main reports auto-finish pending when PR merge policy blocks immediate merge', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+  attachOriginRemoteForBranch(repoDir, 'main');
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('git', ['add', '.'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['commit', '-m', 'apply gx setup'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  fs.rmSync(path.join(repoDir, 'AGENTS.md'));
+  result = runCmd('git', ['add', '-A'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['commit', '-m', 'simulate drift remove agents'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const ghLogPath = path.join(repoDir, 'gh-calls-pending.log');
+  const { fakePath: fakeGhPath } = createFakeGhScript(`
+echo "$*" >> "${ghLogPath}"
+if [[ "$1" == "auth" && "$2" == "status" ]]; then
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "create" ]]; then
+  exit 0
+fi
+if [[ "$1" == "pr" && "$2" == "view" ]]; then
+  if [[ " $* " == *" --json url "* ]]; then
+    echo "https://example.test/pr/doctor-autofinish-pending"
+    exit 0
+  fi
+  echo "unexpected gh pr view args: $*" >&2
+  exit 1
+fi
+if [[ "$1" == "pr" && "$2" == "merge" ]]; then
+  if [[ " $* " == *" --auto "* ]]; then
+    echo "GraphQL: Pull request Auto merge is not allowed for this repository (enablePullRequestAutoMerge)" >&2
+    exit 1
+  fi
+  echo "X Pull request recodeecom/musafety#999 is not mergeable: the base branch policy prohibits the merge." >&2
+  echo "To have the pull request merged after all the requirements have been met, add the --auto flag." >&2
+  exit 1
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`);
+
+  result = runNodeWithEnv(['doctor', '--target', repoDir], repoDir, { MUSAFETY_GH_BIN: fakeGhPath });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const ghCalls = fs.readFileSync(ghLogPath, 'utf8');
+  assert.match(ghCalls, /pr merge/);
+  assert.match(ghCalls, /pr merge .* --auto/);
+  const combinedOutput = `${result.stdout}\n${result.stderr}`;
+  assert.match(combinedOutput, /\[guardex\] Auto-finish pending for sandbox branch/);
+  assert.match(combinedOutput, /PR: https:\/\/example\.test\/pr\/doctor-autofinish-pending/);
+  assert.doesNotMatch(combinedOutput, /Auto-finish flow completed for sandbox branch/);
+  assert.match(combinedOutput, /Merge pending review\/check policy/);
+});
+
 test('setup pre-commit blocks codex session commits on non-agent branches by default', () => {
   const repoDir = initRepo();
 
