@@ -79,6 +79,7 @@ const CRITICAL_GUARDRAIL_PATHS = new Set([
 
 const LOCK_FILE_RELATIVE = '.omx/state/agent-file-locks.json';
 const AGENTS_MARKER_START = '<!-- multiagent-safety:START -->';
+const AGENTS_MARKER_END = '<!-- multiagent-safety:END -->';
 const GITIGNORE_MARKER_START = '# multiagent-safety:START';
 const GITIGNORE_MARKER_END = '# multiagent-safety:END';
 const MANAGED_GITIGNORE_PATHS = [
@@ -608,6 +609,10 @@ function ensurePackageScripts(repoRoot, dryRun) {
 function ensureAgentsSnippet(repoRoot, dryRun) {
   const agentsPath = path.join(repoRoot, 'AGENTS.md');
   const snippet = fs.readFileSync(path.join(TEMPLATE_ROOT, 'AGENTS.multiagent-safety.md'), 'utf8').trimEnd();
+  const managedRegex = new RegExp(
+    `${AGENTS_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AGENTS_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    'm',
+  );
 
   if (!fs.existsSync(agentsPath)) {
     if (!dryRun) {
@@ -617,8 +622,19 @@ function ensureAgentsSnippet(repoRoot, dryRun) {
   }
 
   const existing = fs.readFileSync(agentsPath, 'utf8');
+  if (managedRegex.test(existing)) {
+    const next = existing.replace(managedRegex, snippet);
+    if (next === existing) {
+      return { status: 'unchanged', file: 'AGENTS.md' };
+    }
+    if (!dryRun) {
+      fs.writeFileSync(agentsPath, next, 'utf8');
+    }
+    return { status: 'updated', file: 'AGENTS.md', note: 'refreshed guardex-managed block' };
+  }
+
   if (existing.includes(AGENTS_MARKER_START)) {
-    return { status: 'unchanged', file: 'AGENTS.md' };
+    return { status: 'unchanged', file: 'AGENTS.md', note: 'existing marker found without managed end marker' };
   }
 
   const separator = existing.endsWith('\n') ? '\n' : '\n\n';

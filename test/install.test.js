@@ -247,7 +247,7 @@ test('setup provisions workflow files and repo config', () => {
 
   const agentsContent = fs.readFileSync(path.join(repoDir, 'AGENTS.md'), 'utf8');
   assert.equal(agentsContent.includes('<!-- multiagent-safety:START -->'), true);
-  assert.match(agentsContent, /Per-message loop is mandatory/);
+  assert.match(agentsContent, /For every new task, if an assigned agent sub-branch\/worktree is already open, continue in that sub-branch/);
 
   const gitignoreContent = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
   assert.match(gitignoreContent, /# multiagent-safety:START/);
@@ -269,6 +269,38 @@ test('setup provisions workflow files and repo config', () => {
 
   const secondRun = runNode(['setup', '--target', repoDir], repoDir);
   assert.equal(secondRun.status, 0, secondRun.stderr || secondRun.stdout);
+});
+
+test('setup refreshes existing managed AGENTS block to latest template policy', () => {
+  const repoDir = initRepo();
+  const legacyAgents = `# AGENTS
+
+Project-specific guidance before managed block.
+
+<!-- multiagent-safety:START -->
+## Multi-Agent Execution Contract (multiagent-safety)
+- legacy managed clause
+<!-- multiagent-safety:END -->
+
+Trailing project notes after managed block.
+`;
+  fs.writeFileSync(path.join(repoDir, 'AGENTS.md'), legacyAgents, 'utf8');
+
+  const result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const nextAgents = fs.readFileSync(path.join(repoDir, 'AGENTS.md'), 'utf8');
+  assert.match(nextAgents, /Project-specific guidance before managed block\./);
+  assert.match(nextAgents, /Trailing project notes after managed block\./);
+  assert.match(
+    nextAgents,
+    /For every new task, if an assigned agent sub-branch\/worktree is already open, continue in that sub-branch/,
+  );
+  assert.match(
+    nextAgents,
+    /Never implement directly on the local\/base branch checkout; keep it unchanged and perform all edits in the agent sub-branch\/worktree\./,
+  );
+  assert.doesNotMatch(nextAgents, /legacy managed clause/);
 });
 
 test('setup auto-adds existing local user branches to protected branches', () => {
