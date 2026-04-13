@@ -1844,6 +1844,92 @@ test('copy-commands outputs command-only checklist', () => {
   assert.doesNotMatch(result.stdout, /Use this exact checklist/);
 });
 
+test('review-bot scaffolds Codex PR review workflow and prompt/schema files', () => {
+  const repoDir = initRepo();
+  const result = runNode(
+    [
+      'review-bot',
+      '--target',
+      repoDir,
+      '--base-branches',
+      'dev,main',
+      '--bot-login',
+      'guardex-bot',
+      '--head-prefix',
+      'agent/',
+    ],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Review bot target:/);
+  assert.match(result.stdout, /Protected base branches for bot: dev, main/);
+  assert.match(result.stdout, /Auto-merge head-branch prefix: agent\//);
+
+  const workflowPath = path.join(repoDir, '.github', 'workflows', 'guardex-review-bot.yml');
+  const promptPath = path.join(repoDir, '.github', 'guardex', 'pr-review-prompt.md');
+  const schemaPath = path.join(repoDir, '.github', 'guardex', 'review-schema.json');
+
+  assert.equal(fs.existsSync(workflowPath), true);
+  assert.equal(fs.existsSync(promptPath), true);
+  assert.equal(fs.existsSync(schemaPath), true);
+
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  assert.match(workflow, /branches:\n\s+- dev\n\s+- main/);
+  assert.match(workflow, /openai\/codex-action@v1/);
+  assert.match(workflow, /openai-api-key: \${{ secrets\.OPENAI_API_KEY }}/);
+  assert.match(workflow, /github-token: \${{ secrets\.GUARDEX_BOT_TOKEN \|\| github\.token }}/);
+  assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'agent\/'\)/);
+  assert.match(workflow, /contains\(github\.event\.pull_request\.labels\.\*\.name, 'guardex-automerge'\)/);
+
+  const prompt = fs.readFileSync(promptPath, 'utf8');
+  assert.match(prompt, /Unified diff: \.github\/guardex\/pr\.diff/);
+  assert.match(prompt, /Output MUST match the provided JSON schema exactly/);
+
+  const schema = JSON.parse(fs.readFileSync(schemaPath, 'utf8'));
+  assert.equal(schema.properties.verdict.enum.includes('approve'), true);
+  assert.equal(schema.properties.verdict.enum.includes('request_changes'), true);
+});
+
+test('review-bot defaults target branches to current local branch', () => {
+  const repoDir = initRepoOnBranch('main');
+  const result = runNode(['review-bot', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Protected base branches for bot: main/);
+
+  const workflowPath = path.join(repoDir, '.github', 'workflows', 'guardex-review-bot.yml');
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  assert.match(workflow, /branches:\n\s+- main/);
+});
+
+test('review-bot on agent branch defaults target branch to musafety base branch', () => {
+  const repoDir = initRepoOnBranch('main');
+  let result = runCmd('git', ['checkout', '-b', 'agent/test-review-bot-base'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['config', 'branch.agent/test-review-bot-base.musafetyBase', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runNode(['review-bot', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Protected base branches for bot: main/);
+
+  const workflowPath = path.join(repoDir, '.github', 'workflows', 'guardex-review-bot.yml');
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  assert.match(workflow, /branches:\n\s+- main/);
+});
+
+test('review-bot refuses to overwrite existing files without --force', () => {
+  const repoDir = initRepo();
+  let result = runNode(['review-bot', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runNode(['review-bot', '--target', repoDir], repoDir);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /Refusing to overwrite existing file without --force/);
+
+  const forced = runNode(['review-bot', '--target', repoDir, '--force'], repoDir);
+  assert.equal(forced.status, 0, forced.stderr || forced.stdout);
+});
+
 test('setup dry-run accepts explicit global install approval flags', () => {
   const repoDir = initRepo();
 

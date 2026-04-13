@@ -115,6 +115,35 @@ gx scan
 gx report scorecard --repo github.com/recodeecom/multiagent-safety
 ```
 
+## Codex PR review bot (auto review + optional auto-merge)
+
+Scaffold a GitHub Action that uses `openai/codex-action` to review PRs for selected base branches:
+
+```sh
+gx review-bot --base-branches dev,main --bot-login guardex-bot
+```
+
+Defaults and branch flow:
+
+- If `--base-branches` is omitted, GuardeX uses your **current local branch** (for example `main`).  
+  If you run from an `agent/...` branch, it resolves to that branch's configured `musafetyBase` (for example `main`).
+- Auto-merge is only attempted for PR head branches matching `agent/` (override with `--head-prefix <prefix>`).
+- Agents should push to their own branch first (`agent/...`), then open PRs into the selected base branch(es).
+
+Generated files:
+
+- `.github/workflows/guardex-review-bot.yml`
+- `.github/guardex/pr-review-prompt.md`
+- `.github/guardex/review-schema.json`
+
+What to configure in GitHub:
+
+1. Required secret: `OPENAI_API_KEY` (for Codex API access).
+2. Optional but recommended: create a dedicated bot account (for example `guardex-bot`) and store its PAT in `GUARDEX_BOT_TOKEN` so comments/merge actions use that identity.
+3. Add PR label `guardex-automerge` to allow auto-merge when the bot verdict is `approve`.
+
+The workflow uploads Codex structured output as an artifact (`guardex-codex-review-<pr-number>`) so you can inspect exactly what the bot produced.
+
 ## Important behavior defaults
 
 - No command defaults to `gx status`.

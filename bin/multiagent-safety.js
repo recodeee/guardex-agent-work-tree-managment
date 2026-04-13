@@ -89,6 +89,14 @@ const MANAGED_GITIGNORE_PATHS = [
   '.claude/commands/guardex.md',
   LOCK_FILE_RELATIVE,
 ];
+const REVIEW_BOT_WORKFLOW_RELATIVE = '.github/workflows/guardex-review-bot.yml';
+const REVIEW_BOT_PROMPT_RELATIVE = '.github/guardex/pr-review-prompt.md';
+const REVIEW_BOT_SCHEMA_RELATIVE = '.github/guardex/review-schema.json';
+const REVIEW_BOT_OUTPUT_RELATIVE = '.github/guardex/review-output.json';
+const REVIEW_BOT_DIFF_RELATIVE = '.github/guardex/pr.diff';
+const REVIEW_BOT_CHANGED_FILES_RELATIVE = '.github/guardex/changed-files.txt';
+const REVIEW_BOT_AUTO_MERGE_LABEL = 'guardex-automerge';
+const REVIEW_BOT_HEAD_BRANCH_PREFIX_DEFAULT = 'agent/';
 const COMMAND_TYPO_ALIASES = new Map([
   ['relaese', 'release'],
   ['realaese', 'release'],
@@ -106,6 +114,7 @@ const SUGGESTIBLE_COMMANDS = [
   'setup',
   'init',
   'doctor',
+  'review-bot',
   'report',
   'copy-prompt',
   'copy-commands',
@@ -125,6 +134,7 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['setup', 'Install + repair guardrails in a git repo (supports --no-gitignore)'],
   ['init', 'Alias of setup (bootstrap + repair guardrails in a git repo)'],
   ['doctor', 'Repair safety setup drift, then verify repo safety'],
+  ['review-bot', 'Scaffold a Codex PR review + optional auto-merge GitHub Action'],
   ['report', 'Generate security/safety reports (for example: OpenSSF scorecard)'],
   ['copy-prompt', 'Print the AI-ready setup checklist'],
   ['copy-commands', 'Print setup checklist as executable commands only'],
@@ -1341,6 +1351,475 @@ function parseReportArgs(rawArgs) {
   }
 
   return options;
+}
+
+function parseReviewBotArgs(rawArgs) {
+  const options = {
+    target: process.cwd(),
+    baseBranches: '',
+    botLogin: 'guardex-bot',
+    headBranchPrefix: REVIEW_BOT_HEAD_BRANCH_PREFIX_DEFAULT,
+    model: '',
+    apiKeySecret: 'OPENAI_API_KEY',
+    botTokenSecret: 'GUARDEX_BOT_TOKEN',
+    force: false,
+    dryRun: false,
+    json: false,
+  };
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--target') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error('--target requires a path value');
+      options.target = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--base-branches' || arg === '--branches' || arg === '--base') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error(`${arg} requires a comma/space separated branch list`);
+      options.baseBranches = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--bot-login') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error('--bot-login requires a GitHub login value');
+      options.botLogin = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--head-prefix' || arg === '--head-branch-prefix') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error(`${arg} requires a branch prefix value`);
+      options.headBranchPrefix = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--model') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error('--model requires a Codex model value');
+      options.model = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--api-key-secret') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error('--api-key-secret requires a secret name value');
+      options.apiKeySecret = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--bot-token-secret') {
+      const next = rawArgs[index + 1];
+      if (!next) throw new Error('--bot-token-secret requires a secret name value');
+      options.botTokenSecret = next.trim();
+      index += 1;
+      continue;
+    }
+    if (arg === '--force') {
+      options.force = true;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      options.dryRun = true;
+      continue;
+    }
+    if (arg === '--json') {
+      options.json = true;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+
+  return options;
+}
+
+function normalizeReviewBotBranches(branchesRaw, repoRoot) {
+  const requested = parseBranchList(branchesRaw || '');
+  let fallback = [];
+  try {
+    const current = currentBranchName(repoRoot);
+    if (current && current !== 'HEAD') {
+      if (current.startsWith('agent/')) {
+        const branchBase = readGitConfig(repoRoot, `branch.${current}.musafetyBase`);
+        if (branchBase) {
+          fallback = [branchBase];
+        } else {
+          const configuredBase = readGitConfig(repoRoot, GIT_BASE_BRANCH_KEY);
+          if (configuredBase) {
+            fallback = [configuredBase];
+          } else if (
+            gitRun(repoRoot, ['show-ref', '--verify', '--quiet', 'refs/heads/main'], { allowFailure: true }).status === 0
+          ) {
+            fallback = ['main'];
+          } else if (
+            gitRun(repoRoot, ['show-ref', '--verify', '--quiet', 'refs/heads/dev'], { allowFailure: true }).status === 0
+          ) {
+            fallback = ['dev'];
+          } else {
+            fallback = [current];
+          }
+        }
+      } else {
+        fallback = [current];
+      }
+    }
+  } catch {
+    fallback = [];
+  }
+  if (fallback.length === 0) {
+    fallback = readProtectedBranches(repoRoot);
+  }
+  const selected = uniquePreserveOrder(requested.length > 0 ? requested : fallback);
+  const branchPattern = /^[A-Za-z0-9._/-]+$/;
+  const invalid = selected.find((branch) => !branchPattern.test(branch));
+  if (invalid) {
+    throw new Error(`Invalid branch name for review-bot workflow: '${invalid}'`);
+  }
+  if (selected.length === 0) {
+    throw new Error('No base branches resolved for review-bot workflow');
+  }
+  return selected;
+}
+
+function normalizeReviewBotHeadPrefix(prefixRaw) {
+  const prefix = String(prefixRaw || '').trim();
+  if (!prefix) {
+    throw new Error('--head-prefix cannot be empty');
+  }
+  const branchPattern = /^[A-Za-z0-9._/-]+$/;
+  if (!branchPattern.test(prefix)) {
+    throw new Error(`Invalid head branch prefix for review-bot workflow: '${prefix}'`);
+  }
+  return prefix;
+}
+
+function writeScaffoldFile(repoRoot, relativePath, content, options) {
+  const destinationPath = path.join(repoRoot, relativePath);
+  const exists = fs.existsSync(destinationPath);
+  if (exists && !options.force) {
+    throw new Error(
+      `Refusing to overwrite existing file without --force: ${relativePath}`,
+    );
+  }
+
+  if (!options.dryRun) {
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.writeFileSync(destinationPath, content, 'utf8');
+  }
+
+  return {
+    status: exists ? (options.dryRun ? 'would-overwrite' : 'overwritten') : (options.dryRun ? 'would-create' : 'created'),
+    file: relativePath,
+  };
+}
+
+function renderReviewBotPrompt() {
+  return [
+    'You are GuardeX PR review bot.',
+    '',
+    'Review ONLY the pull request changes prepared in this workspace:',
+    `- Unified diff: ${REVIEW_BOT_DIFF_RELATIVE}`,
+    `- Changed file list: ${REVIEW_BOT_CHANGED_FILES_RELATIVE}`,
+    '',
+    'Rules:',
+    '- Focus on correctness, regressions, security, and test gaps.',
+    '- Keep findings concise and actionable.',
+    '- If there are no significant issues, return verdict=approve.',
+    '- Never include secrets or environment values in output.',
+    '',
+    'Output MUST match the provided JSON schema exactly.',
+  ].join('\n') + '\n';
+}
+
+function renderReviewBotSchema() {
+  return JSON.stringify(
+    {
+      type: 'object',
+      additionalProperties: false,
+      required: ['verdict', 'summary', 'recommendation', 'findings'],
+      properties: {
+        verdict: {
+          type: 'string',
+          enum: ['approve', 'request_changes'],
+        },
+        summary: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 1200,
+        },
+        recommendation: {
+          type: 'string',
+          minLength: 1,
+          maxLength: 1200,
+        },
+        findings: {
+          type: 'array',
+          maxItems: 20,
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['severity', 'path', 'message'],
+            properties: {
+              severity: {
+                type: 'string',
+                enum: ['low', 'medium', 'high'],
+              },
+              path: {
+                type: 'string',
+                minLength: 1,
+              },
+              message: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 600,
+              },
+            },
+          },
+        },
+      },
+    },
+    null,
+    2,
+  ) + '\n';
+}
+
+function renderReviewBotWorkflow(options) {
+  const branchLines = options.baseBranches.map((branch) => `      - ${branch}`);
+  const modelLines = options.model
+    ? [`          model: ${options.model}`]
+    : [];
+
+  return [
+    'name: GuardeX Codex PR Review Bot',
+    '',
+    'on:',
+    '  pull_request_target:',
+    '    types: [opened, synchronize, reopened, ready_for_review, labeled]',
+    '    branches:',
+    ...branchLines,
+    '',
+    'concurrency:',
+    '  group: guardex-review-${{ github.event.pull_request.number }}',
+    '  cancel-in-progress: true',
+    '',
+    'jobs:',
+    '  codex_review:',
+    '    if: >',
+    '      github.event.pull_request.draft == false &&',
+    '      github.event.pull_request.head.repo.full_name == github.repository',
+    '    runs-on: ubuntu-latest',
+    '    permissions:',
+    '      contents: read',
+    '      pull-requests: write',
+    '      issues: write',
+    '    outputs:',
+    '      verdict: ${{ steps.parse.outputs.verdict }}',
+    '      summary: ${{ steps.parse.outputs.summary }}',
+    '    steps:',
+    '      - uses: actions/checkout@v5',
+    '        with:',
+    '          ref: refs/pull/${{ github.event.pull_request.number }}/merge',
+    '',
+    '      - name: Pre-fetch base and head refs for the PR',
+    '        env:',
+    '          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}',
+    '          PR_NUMBER: ${{ github.event.pull_request.number }}',
+    '        run: |',
+    '          git fetch --no-tags origin \\',
+    '            "$PR_BASE_REF" \\',
+    '            "+refs/pull/$PR_NUMBER/head"',
+    '',
+    '      - name: Prepare PR diff for Codex',
+    '        env:',
+    '          PR_BASE_REF: ${{ github.event.pull_request.base.ref }}',
+    '        run: |',
+    `          git diff --unified=0 "origin/$PR_BASE_REF"...FETCH_HEAD > ${REVIEW_BOT_DIFF_RELATIVE}`,
+    `          git diff --name-only "origin/$PR_BASE_REF"...FETCH_HEAD > ${REVIEW_BOT_CHANGED_FILES_RELATIVE}`,
+    '',
+    '      - name: Run Codex review',
+    '        id: run_codex',
+    '        uses: openai/codex-action@v1',
+    '        with:',
+    `          openai-api-key: \${{ secrets.${options.apiKeySecret} }}`,
+    `          prompt-file: ${REVIEW_BOT_PROMPT_RELATIVE}`,
+    `          output-schema-file: ${REVIEW_BOT_SCHEMA_RELATIVE}`,
+    `          output-file: ${REVIEW_BOT_OUTPUT_RELATIVE}`,
+    '          sandbox: read-only',
+    '          effort: medium',
+    '          safety-strategy: drop-sudo',
+    ...modelLines,
+    '',
+    '      - name: Parse structured review output',
+    '        id: parse',
+    '        run: |',
+    `          output_file="${REVIEW_BOT_OUTPUT_RELATIVE}"`,
+    '          if [[ ! -f "$output_file" ]]; then',
+    '            echo "Codex output file missing: $output_file" >&2',
+    '            exit 1',
+    '          fi',
+    '',
+    '          jq -e \'.verdict and .summary and .recommendation and (.findings | type == "array")\' "$output_file" >/dev/null',
+    '          verdict="$(jq -r \'.verdict\' "$output_file")"',
+    '          summary="$(jq -r \'.summary\' "$output_file")"',
+    '          recommendation="$(jq -r \'.recommendation\' "$output_file")"',
+    '          findings="$(jq -r \'if (.findings | length) == 0 then "- No issues found." else (.findings[] | "- **" + (.severity|ascii_upcase) + "** " + .path + ": " + .message) end\' "$output_file")"',
+    '',
+    '          {',
+    '            echo "verdict=$verdict"',
+    '            echo "summary<<EOF"',
+    '            echo "$summary"',
+    '            echo "EOF"',
+    '            echo "findings<<EOF"',
+    '            echo "$findings"',
+    '            echo "EOF"',
+    '            echo "recommendation<<EOF"',
+    '            echo "$recommendation"',
+    '            echo "EOF"',
+    '          } >> "$GITHUB_OUTPUT"',
+    '',
+    '      - name: Upload review output artifact',
+    '        if: always()',
+    '        uses: actions/upload-artifact@v4',
+    '        with:',
+    '          name: guardex-codex-review-${{ github.event.pull_request.number }}',
+    `          path: ${REVIEW_BOT_OUTPUT_RELATIVE}`,
+    '          if-no-files-found: ignore',
+    '',
+    '      - name: Upsert GuardeX review comment',
+    '        uses: actions/github-script@v7',
+    '        env:',
+    '          REVIEW_VERDICT: ${{ steps.parse.outputs.verdict }}',
+    '          REVIEW_SUMMARY: ${{ steps.parse.outputs.summary }}',
+    '          REVIEW_FINDINGS: ${{ steps.parse.outputs.findings }}',
+    '          REVIEW_RECOMMENDATION: ${{ steps.parse.outputs.recommendation }}',
+    '        with:',
+    `          github-token: \${{ secrets.${options.botTokenSecret} || github.token }}`,
+    '          script: |',
+    "            const marker = '<!-- guardex-codex-review -->';",
+    '            const verdict = process.env.REVIEW_VERDICT || "request_changes";',
+    "            const verdictEmoji = verdict === 'approve' ? '✅' : '⚠️';",
+    '            const issue_number = context.payload.pull_request.number;',
+    '            const body = [',
+    '              marker,',
+    '              `## ${verdictEmoji} GuardeX Codex review (${verdict})`,',
+    "              '',",
+    '              process.env.REVIEW_SUMMARY || "No summary generated.",',
+    "              '',",
+    "              '### Findings',",
+    '              process.env.REVIEW_FINDINGS || "- No findings.",',
+    "              '',",
+    "              '### Recommendation',",
+    '              process.env.REVIEW_RECOMMENDATION || "No recommendation generated.",',
+    "              '',",
+    `              '_Auto-merge is enabled only when label \\\`${REVIEW_BOT_AUTO_MERGE_LABEL}\\\` exists and verdict is \\\`approve\\\`._',`,
+    '            ].join("\\n");',
+    '',
+    '            const comments = await github.paginate(github.rest.issues.listComments, {',
+    '              owner: context.repo.owner,',
+    '              repo: context.repo.repo,',
+    '              issue_number,',
+    '              per_page: 100,',
+    '            });',
+    '',
+    '            const existing = comments.find((comment) =>',
+    "              comment?.body?.includes(marker) && comment?.user?.login === process.env.GITHUB_ACTOR,",
+    '            );',
+    '',
+    '            if (existing) {',
+    '              await github.rest.issues.updateComment({',
+    '                owner: context.repo.owner,',
+    '                repo: context.repo.repo,',
+    '                comment_id: existing.id,',
+    '                body,',
+    '              });',
+    '            } else {',
+    '              await github.rest.issues.createComment({',
+    '                owner: context.repo.owner,',
+    '                repo: context.repo.repo,',
+    '                issue_number,',
+    '                body,',
+    '              });',
+    '            }',
+    '',
+    '  auto_merge:',
+    '    needs: codex_review',
+    '    if: >',
+    "      needs.codex_review.outputs.verdict == 'approve' &&",
+    `      startsWith(github.event.pull_request.head.ref, '${options.headBranchPrefix}') &&`,
+    `      contains(github.event.pull_request.labels.*.name, '${REVIEW_BOT_AUTO_MERGE_LABEL}')`,
+    '    runs-on: ubuntu-latest',
+    '    permissions:',
+    '      contents: write',
+    '      pull-requests: write',
+    '    steps:',
+    '      - name: Enable auto-merge',
+    '        env:',
+    `          GH_TOKEN: \${{ secrets.${options.botTokenSecret} || github.token }}`,
+    '          PR_NUMBER: ${{ github.event.pull_request.number }}',
+    '        run: |',
+    '          gh pr merge "$PR_NUMBER" --squash --auto --delete-branch',
+  ].join('\n') + '\n';
+}
+
+function reviewBot(rawArgs) {
+  const options = parseReviewBotArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const baseBranches = normalizeReviewBotBranches(options.baseBranches, repoRoot);
+  const headBranchPrefix = normalizeReviewBotHeadPrefix(options.headBranchPrefix);
+  if (!options.botLogin) {
+    throw new Error('--bot-login cannot be empty');
+  }
+
+  const workflowContent = renderReviewBotWorkflow({
+    ...options,
+    baseBranches,
+    headBranchPrefix,
+  });
+
+  const operations = [
+    writeScaffoldFile(repoRoot, REVIEW_BOT_WORKFLOW_RELATIVE, workflowContent, options),
+    writeScaffoldFile(repoRoot, REVIEW_BOT_PROMPT_RELATIVE, renderReviewBotPrompt(), options),
+    writeScaffoldFile(repoRoot, REVIEW_BOT_SCHEMA_RELATIVE, renderReviewBotSchema(), options),
+  ];
+
+  const payload = {
+    repoRoot,
+    baseBranches,
+    botLogin: options.botLogin,
+    headBranchPrefix,
+    apiKeySecret: options.apiKeySecret,
+    botTokenSecret: options.botTokenSecret,
+    files: operations,
+    dryRun: Boolean(options.dryRun),
+  };
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    process.exitCode = 0;
+    return;
+  }
+
+  console.log(`[${TOOL_NAME}] Review bot target: ${repoRoot}`);
+  for (const op of operations) {
+    console.log(`  - ${op.status.padEnd(15)} ${op.file}`);
+  }
+  if (!options.dryRun) {
+    console.log(`[${TOOL_NAME}] Protected base branches for bot: ${baseBranches.join(', ')}`);
+    console.log(`[${TOOL_NAME}] Auto-merge head-branch prefix: ${headBranchPrefix}`);
+    console.log(`[${TOOL_NAME}] Next steps:`);
+    console.log(`  1) Add secret '${options.apiKeySecret}' (Codex/OpenAI API key).`);
+    console.log(`  2) Optional but recommended: create GitHub bot account '${options.botLogin}' and store its PAT in '${options.botTokenSecret}'.`);
+    console.log(`  3) Optional local account prep via codex-auth: codex-auth use ${options.botLogin}`);
+    console.log(`  4) Agents should push to '${headBranchPrefix}*' branches first, then open PRs into ${baseBranches.join(', ')}.`);
+    console.log(`  5) Commit the generated workflow files and open a PR.`);
+    console.log(
+      `  6) Add label '${REVIEW_BOT_AUTO_MERGE_LABEL}' to PRs that should auto-merge when review verdict is approve.`,
+    );
+  }
+  process.exitCode = 0;
 }
 
 function todayDateStamp() {
@@ -3189,6 +3668,11 @@ function main() {
 
   if (command === 'doctor') {
     doctor(rest);
+    return;
+  }
+
+  if (command === 'review-bot') {
+    reviewBot(rest);
     return;
   }
 
