@@ -3607,6 +3607,9 @@ function install(rawArgs) {
   printOperations('Install target', payload, options.dryRun);
 
   if (!options.dryRun) {
+    if (!options.skipAgents) {
+      console.log(`[${TOOL_NAME}] AGENTS.md managed policy block is configured by install.`);
+    }
     console.log(`[${TOOL_NAME}] Installed. Next step: ${TOOL_NAME} setup`);
   }
 
