@@ -440,6 +440,22 @@ test('install blocks in-place maintenance writes on protected main unless overri
   assert.match(result.stderr, /install blocked on protected branch 'main'/);
 });
 
+test('install configures AGENTS managed policy block with GX contract wording', () => {
+  const repoDir = initRepo();
+
+  const result = runNode(['install', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /AGENTS\.md managed policy block is configured by install\./);
+
+  const agentsContent = fs.readFileSync(path.join(repoDir, 'AGENTS.md'), 'utf8');
+  assert.match(agentsContent, /<!-- multiagent-safety:START -->/);
+  assert.match(agentsContent, /## Multi-Agent Execution Contract \(GX\)/);
+  assert.match(
+    agentsContent,
+    /OMX completion policy: when a task is done, the agent must commit the task changes, push the agent branch, and create\/update a PR/,
+  );
+});
+
 test('doctor on protected main auto-runs in a sandbox branch/worktree', () => {
   const repoDir = initRepoOnBranch('main');
   seedCommit(repoDir);

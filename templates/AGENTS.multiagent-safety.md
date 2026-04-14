@@ -1,5 +1,5 @@
 <!-- multiagent-safety:START -->
-## Multi-Agent Execution Contract (multiagent-safety)
+## Multi-Agent Execution Contract (GX)
 
 0. Session plan comment + read gate (required)
 
@@ -13,6 +13,7 @@
 - In-place branch mode is disallowed: never switch the active local/base checkout to an agent branch.
 - Treat the base branch (`main` or the user's current local base branch) as read-only while the agent branch is active.
 - Agent completion defaults to `scripts/codex-agent.sh`, which auto-finishes the branch (auto-commit changed files, push/create PR, attempt merge, and pull the local base branch after merge).
+- OMX completion policy: when a task is done, the agent must commit the task changes, push the agent branch, and create/update a PR for those changes (via `codex-agent` or `agent-branch-finish`).
 - Auto-finish now waits for required checks/merge and then cleans merged sandbox branch/worktree by default.
 - Use `--no-cleanup` only when you explicitly need to keep a merged sandbox for audit/debug follow-up.
 - If codex-agent auto-finish cannot complete, immediately run `scripts/agent-branch-finish.sh --branch "<agent-branch>" --via-pr --wait-for-merge` and keep the branch open until checks/review pass.
