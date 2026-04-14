@@ -128,6 +128,7 @@ const SUGGESTIBLE_COMMANDS = [
   'init',
   'doctor',
   'review',
+  'finish',
   'report',
   'copy-prompt',
   'copy-commands',
@@ -148,6 +149,7 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['init', 'Alias of setup (bootstrap + repair guardrails in a git repo)'],
   ['doctor', 'Repair safety setup drift, then verify repo safety'],
   ['report', 'Generate security/safety reports (for example: OpenSSF scorecard)'],
+  ['finish', 'Auto-commit completed agent branches, then run PR finish flow'],
   ['copy-prompt', 'Print the AI-ready setup checklist'],
   ['copy-commands', 'Print setup checklist as executable commands only'],
   ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
@@ -198,6 +200,8 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup GuardeX (Guardian T-R
    - Finished branches stay available by default for audit/follow-up.
      Remove them explicitly when done:
      gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
+   - To finalize all completed agent branches in one pass:
+     gx finish --all
 
 6) Optional: create OpenSpec planning workspace:
    bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
@@ -222,6 +226,7 @@ bash scripts/codex-agent.sh "task" "agent-name"
 bash scripts/agent-branch-start.sh "task" "agent-name"
 python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
 bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+gx finish --all
 gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
 bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
 gx protect add release staging
@@ -628,6 +633,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
     'agent:review:watch': 'bash ./scripts/review-bot-watch.sh',
     'agent:branch:start': 'bash ./scripts/agent-branch-start.sh',
     'agent:branch:finish': 'bash ./scripts/agent-branch-finish.sh',
+    'agent:finish': `${SHORT_TOOL_NAME} finish --all`,
     'agent:cleanup': `${SHORT_TOOL_NAME} cleanup`,
     'agent:hooks:install': 'bash ./scripts/install-agent-git-hooks.sh',
     'agent:locks:claim': 'python3 ./scripts/agent-file-locks.py claim',
@@ -2285,6 +2291,382 @@ function parseCleanupArgs(rawArgs) {
   return options;
 }
 
+function parseFinishArgs(rawArgs) {
+  const options = {
+    target: process.cwd(),
+    base: '',
+    branch: '',
+    all: false,
+    dryRun: false,
+    waitForMerge: true,
+    cleanup: true,
+    keepRemote: false,
+    noAutoCommit: false,
+    failFast: false,
+    commitMessage: '',
+  };
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--target') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--target requires a path value');
+      }
+      options.target = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--base') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--base requires a branch value');
+      }
+      options.base = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--branch') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--branch requires an agent/* branch value');
+      }
+      options.branch = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--commit-message') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--commit-message requires a value');
+      }
+      options.commitMessage = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--all') {
+      options.all = true;
+      continue;
+    }
+    if (arg === '--dry-run') {
+      options.dryRun = true;
+      continue;
+    }
+    if (arg === '--wait-for-merge') {
+      options.waitForMerge = true;
+      continue;
+    }
+    if (arg === '--no-wait-for-merge') {
+      options.waitForMerge = false;
+      continue;
+    }
+    if (arg === '--cleanup') {
+      options.cleanup = true;
+      continue;
+    }
+    if (arg === '--no-cleanup') {
+      options.cleanup = false;
+      continue;
+    }
+    if (arg === '--keep-remote') {
+      options.keepRemote = true;
+      continue;
+    }
+    if (arg === '--no-auto-commit') {
+      options.noAutoCommit = true;
+      continue;
+    }
+    if (arg === '--fail-fast') {
+      options.failFast = true;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+
+  if (options.branch && !options.branch.startsWith('agent/')) {
+    throw new Error(`--branch must reference an agent/* branch (received: ${options.branch})`);
+  }
+
+  return options;
+}
+
+function listAgentWorktrees(repoRoot) {
+  const result = gitRun(repoRoot, ['worktree', 'list', '--porcelain'], { allowFailure: true });
+  if (result.status !== 0) {
+    throw new Error('Unable to list git worktrees for finish command');
+  }
+
+  const entries = [];
+  let currentPath = '';
+  let currentBranchRef = '';
+  const lines = String(result.stdout || '').split('\n');
+  for (const line of lines) {
+    if (!line.trim()) {
+      if (currentPath && currentBranchRef.startsWith('refs/heads/agent/')) {
+        entries.push({
+          worktreePath: currentPath,
+          branch: currentBranchRef.replace(/^refs\/heads\//, ''),
+        });
+      }
+      currentPath = '';
+      currentBranchRef = '';
+      continue;
+    }
+    if (line.startsWith('worktree ')) {
+      currentPath = line.slice('worktree '.length).trim();
+      continue;
+    }
+    if (line.startsWith('branch ')) {
+      currentBranchRef = line.slice('branch '.length).trim();
+      continue;
+    }
+  }
+  if (currentPath && currentBranchRef.startsWith('refs/heads/agent/')) {
+    entries.push({
+      worktreePath: currentPath,
+      branch: currentBranchRef.replace(/^refs\/heads\//, ''),
+    });
+  }
+
+  return entries;
+}
+
+function listLocalAgentBranchesForFinish(repoRoot) {
+  const result = gitRun(
+    repoRoot,
+    ['for-each-ref', '--format=%(refname:short)', 'refs/heads/agent/'],
+    { allowFailure: true },
+  );
+  if (result.status !== 0) {
+    throw new Error('Unable to list local agent branches');
+  }
+  return uniquePreserveOrder(
+    String(result.stdout || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith('agent/')),
+  );
+}
+
+function gitQuietChangeResult(worktreePath, args) {
+  const result = run('git', ['-C', worktreePath, ...args], { stdio: 'pipe' });
+  if (result.status === 0) {
+    return false;
+  }
+  if (result.status === 1) {
+    return true;
+  }
+  throw new Error(
+    `git ${args.join(' ')} failed in ${worktreePath}: ${(
+      result.stderr || result.stdout || ''
+    ).trim()}`,
+  );
+}
+
+function worktreeHasLocalChanges(worktreePath) {
+  const hasUnstaged = gitQuietChangeResult(worktreePath, [
+    'diff',
+    '--quiet',
+    '--',
+    '.',
+    ':(exclude).omx/state/agent-file-locks.json',
+  ]);
+  if (hasUnstaged) {
+    return true;
+  }
+
+  const hasStaged = gitQuietChangeResult(worktreePath, [
+    'diff',
+    '--cached',
+    '--quiet',
+    '--',
+    '.',
+    ':(exclude).omx/state/agent-file-locks.json',
+  ]);
+  if (hasStaged) {
+    return true;
+  }
+
+  const untracked = run('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], {
+    stdio: 'pipe',
+  });
+  if (untracked.status !== 0) {
+    throw new Error(`Unable to inspect untracked files in ${worktreePath}`);
+  }
+  return String(untracked.stdout || '').trim().length > 0;
+}
+
+function gitOutputLines(worktreePath, args) {
+  const result = run('git', ['-C', worktreePath, ...args], { stdio: 'pipe' });
+  if (result.status !== 0) {
+    throw new Error(
+      `git ${args.join(' ')} failed in ${worktreePath}: ${(
+        result.stderr || result.stdout || ''
+      ).trim()}`,
+    );
+  }
+  return String(result.stdout || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function claimLocksForAutoCommit(repoRoot, worktreePath, branch) {
+  const lockScript = path.join(repoRoot, 'scripts', 'agent-file-locks.py');
+  if (!fs.existsSync(lockScript)) {
+    return;
+  }
+
+  const changedFiles = uniquePreserveOrder([
+    ...gitOutputLines(worktreePath, ['diff', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
+    ...gitOutputLines(worktreePath, ['diff', '--cached', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
+    ...gitOutputLines(worktreePath, ['ls-files', '--others', '--exclude-standard']),
+  ]);
+
+  if (changedFiles.length > 0) {
+    const claim = run('python3', [lockScript, 'claim', '--branch', branch, ...changedFiles], {
+      cwd: repoRoot,
+      stdio: 'pipe',
+    });
+    if (claim.status !== 0) {
+      throw new Error(
+        `Lock claim failed for ${branch}: ${(
+          claim.stderr || claim.stdout || ''
+        ).trim()}`,
+      );
+    }
+  }
+
+  const deletedFiles = uniquePreserveOrder([
+    ...gitOutputLines(worktreePath, [
+      'diff',
+      '--name-only',
+      '--diff-filter=D',
+      '--',
+      '.',
+      ':(exclude).omx/state/agent-file-locks.json',
+    ]),
+    ...gitOutputLines(worktreePath, [
+      'diff',
+      '--cached',
+      '--name-only',
+      '--diff-filter=D',
+      '--',
+      '.',
+      ':(exclude).omx/state/agent-file-locks.json',
+    ]),
+  ]);
+
+  if (deletedFiles.length > 0) {
+    const allowDelete = run('python3', [lockScript, 'allow-delete', '--branch', branch, ...deletedFiles], {
+      cwd: repoRoot,
+      stdio: 'pipe',
+    });
+    if (allowDelete.status !== 0) {
+      throw new Error(
+        `Delete-lock grant failed for ${branch}: ${(
+          allowDelete.stderr || allowDelete.stdout || ''
+        ).trim()}`,
+      );
+    }
+  }
+}
+
+function branchExists(repoRoot, branch) {
+  const result = gitRun(repoRoot, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
+    allowFailure: true,
+  });
+  return result.status === 0;
+}
+
+function resolveFinishBaseBranch(repoRoot, sourceBranch, explicitBase) {
+  if (explicitBase) {
+    return explicitBase;
+  }
+
+  const branchSpecific = readGitConfig(repoRoot, `branch.${sourceBranch}.musafetyBase`);
+  if (branchSpecific) {
+    return branchSpecific;
+  }
+
+  const configured = readGitConfig(repoRoot, GIT_BASE_BRANCH_KEY);
+  if (configured) {
+    return configured;
+  }
+
+  const current = gitRun(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFailure: true });
+  const currentBranch = String(current.stdout || '').trim();
+  if (current.status === 0 && currentBranch && currentBranch !== 'HEAD' && !currentBranch.startsWith('agent/')) {
+    return currentBranch;
+  }
+
+  return DEFAULT_BASE_BRANCH;
+}
+
+function branchMergedIntoBase(repoRoot, branch, baseBranch) {
+  if (!branchExists(repoRoot, baseBranch)) {
+    return false;
+  }
+  const result = gitRun(repoRoot, ['merge-base', '--is-ancestor', branch, baseBranch], {
+    allowFailure: true,
+  });
+  if (result.status === 0) {
+    return true;
+  }
+  if (result.status === 1) {
+    return false;
+  }
+  throw new Error(`Unable to determine merge status for ${branch} -> ${baseBranch}`);
+}
+
+function autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options) {
+  const hasChanges = worktreeHasLocalChanges(worktreePath);
+  if (!hasChanges) {
+    return { changed: false, committed: false };
+  }
+
+  if (options.noAutoCommit) {
+    throw new Error(
+      `Branch '${branch}' has local changes in ${worktreePath}. Re-run without --no-auto-commit or commit manually first.`,
+    );
+  }
+
+  if (options.dryRun) {
+    return { changed: true, committed: false, dryRun: true };
+  }
+
+  claimLocksForAutoCommit(repoRoot, worktreePath, branch);
+
+  const addResult = run('git', ['-C', worktreePath, 'add', '-A'], { stdio: 'pipe' });
+  if (addResult.status !== 0) {
+    throw new Error(`git add failed in ${worktreePath}: ${(addResult.stderr || addResult.stdout || '').trim()}`);
+  }
+
+  const stagedHasChanges = gitQuietChangeResult(worktreePath, [
+    'diff',
+    '--cached',
+    '--quiet',
+    '--',
+    '.',
+    ':(exclude).omx/state/agent-file-locks.json',
+  ]);
+  if (!stagedHasChanges) {
+    return { changed: true, committed: false };
+  }
+
+  const commitMessage = options.commitMessage || `Auto-finish: ${branch}`;
+  const commitResult = run('git', ['-C', worktreePath, 'commit', '-m', commitMessage], { stdio: 'pipe' });
+  if (commitResult.status !== 0) {
+    throw new Error(
+      `Auto-commit failed on '${branch}': ${(
+        commitResult.stderr || commitResult.stdout || ''
+      ).trim()}`,
+    );
+  }
+
+  return { changed: true, committed: true, message: commitMessage };
+}
+
 function syncOperation(repoRoot, strategy, baseRef, ffOnly) {
   if (strategy === 'rebase') {
     if (ffOnly) {
@@ -3487,6 +3869,129 @@ function cleanup(rawArgs) {
   process.exitCode = 0;
 }
 
+function finish(rawArgs) {
+  const options = parseFinishArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const finishScript = path.join(repoRoot, 'scripts', 'agent-branch-finish.sh');
+
+  if (!fs.existsSync(finishScript)) {
+    throw new Error(`Missing finish script: ${finishScript}. Run '${SHORT_TOOL_NAME} setup' first.`);
+  }
+
+  const worktreeEntries = listAgentWorktrees(repoRoot);
+  const worktreeByBranch = new Map(worktreeEntries.map((entry) => [entry.branch, entry.worktreePath]));
+
+  let candidateBranches = [];
+  if (options.branch) {
+    if (!branchExists(repoRoot, options.branch)) {
+      throw new Error(`Local branch not found: ${options.branch}`);
+    }
+    candidateBranches = [options.branch];
+  } else {
+    candidateBranches = uniquePreserveOrder([
+      ...listLocalAgentBranchesForFinish(repoRoot),
+      ...worktreeEntries.map((entry) => entry.branch),
+    ]);
+  }
+
+  const candidates = [];
+  for (const branch of candidateBranches) {
+    const worktreePath = worktreeByBranch.get(branch) || '';
+    const baseBranch = resolveFinishBaseBranch(repoRoot, branch, options.base);
+    const hasChanges = worktreePath ? worktreeHasLocalChanges(worktreePath) : false;
+    const alreadyMerged = branchMergedIntoBase(repoRoot, branch, baseBranch);
+    if (options.all || options.branch || hasChanges || !alreadyMerged) {
+      candidates.push({
+        branch,
+        baseBranch,
+        worktreePath,
+        hasChanges,
+        alreadyMerged,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    console.log(`[${TOOL_NAME}] No pending agent branches to finish.`);
+    process.exitCode = 0;
+    return;
+  }
+
+  let succeeded = 0;
+  let failed = 0;
+  let autoCommitted = 0;
+
+  for (const candidate of candidates) {
+    const { branch, baseBranch, worktreePath } = candidate;
+    console.log(
+      `[${TOOL_NAME}] Finishing '${branch}' -> '${baseBranch}'${worktreePath ? ` (${worktreePath})` : ''}...`,
+    );
+
+    try {
+      let commitState = { changed: false, committed: false };
+      if (worktreePath) {
+        commitState = autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options);
+      }
+
+      if (commitState.committed) {
+        autoCommitted += 1;
+        console.log(`[${TOOL_NAME}] Auto-committed '${branch}' before finish.`);
+      } else if (commitState.changed && commitState.dryRun) {
+        console.log(`[${TOOL_NAME}] [dry-run] Would auto-commit pending changes on '${branch}'.`);
+      }
+
+      const finishArgs = [
+        finishScript,
+        '--branch',
+        branch,
+        '--base',
+        baseBranch,
+        '--via-pr',
+        options.waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
+        options.cleanup ? '--cleanup' : '--no-cleanup',
+      ];
+      if (options.keepRemote) {
+        finishArgs.push('--keep-remote-branch');
+      }
+
+      if (options.dryRun) {
+        console.log(`[${TOOL_NAME}] [dry-run] Would run: bash ${finishArgs.join(' ')}`);
+        succeeded += 1;
+        continue;
+      }
+
+      const finishResult = run('bash', finishArgs, { cwd: repoRoot, stdio: 'pipe' });
+      if (finishResult.stdout) {
+        process.stdout.write(finishResult.stdout);
+      }
+      if (finishResult.stderr) {
+        process.stderr.write(finishResult.stderr);
+      }
+      if (finishResult.status !== 0) {
+        throw new Error(`agent-branch-finish exited with status ${finishResult.status}`);
+      }
+
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+      console.error(`[${TOOL_NAME}] Finish failed for '${branch}': ${error.message}`);
+      if (options.failFast) {
+        break;
+      }
+    }
+  }
+
+  console.log(
+    `[${TOOL_NAME}] Finish summary: total=${candidates.length}, success=${succeeded}, failed=${failed}, autoCommitted=${autoCommitted}`,
+  );
+
+  if (failed > 0) {
+    throw new Error('finish command failed for one or more agent branches');
+  }
+
+  process.exitCode = 0;
+}
+
 function sync(rawArgs) {
   const options = parseSyncArgs(rawArgs);
   const repoRoot = resolveRepoRoot(options.target);
@@ -3812,6 +4317,11 @@ function main() {
 
   if (command === 'review') {
     review(rest);
+    return;
+  }
+
+  if (command === 'finish') {
+    finish(rest);
     return;
   }
 

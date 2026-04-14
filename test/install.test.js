@@ -245,6 +245,7 @@ test('setup provisions workflow files and repo config', () => {
   assert.equal(packageJson.scripts['agent:codex'], 'bash ./scripts/codex-agent.sh');
   assert.equal(packageJson.scripts['agent:review:watch'], 'bash ./scripts/review-bot-watch.sh');
   assert.equal(packageJson.scripts['agent:branch:start'], 'bash ./scripts/agent-branch-start.sh');
+  assert.equal(packageJson.scripts['agent:finish'], 'gx finish --all');
   assert.equal(packageJson.scripts['agent:plan:init'], 'bash ./scripts/openspec/init-plan-workspace.sh');
   assert.equal(packageJson.scripts['agent:protect:list'], 'gx protect list');
   assert.equal(packageJson.scripts['agent:branch:sync'], 'gx sync');
@@ -1161,6 +1162,65 @@ test('review command explains setup + doctor steps when script is missing in tar
     result.stderr,
     new RegExp(`Run 'gx setup --target ${escapeRegexLiteral(repoDir)}' then 'gx doctor --target ${escapeRegexLiteral(repoDir)}'`),
   );
+});
+
+test('finish command auto-commits dirty agent worktree and runs PR finish flow for the branch', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+  attachOriginRemoteForBranch(repoDir, 'main');
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('git', ['add', '.'], repoDir);
+  assert.equal(result.status, 0, result.stderr);
+  result = runCmd('git', ['commit', '-m', 'apply gx setup'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('bash', ['scripts/agent-branch-start.sh', 'finish-all', 'bot'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const agentBranch = extractCreatedBranch(result.stdout);
+  const agentWorktree = extractCreatedWorktree(result.stdout);
+
+  fs.writeFileSync(path.join(agentWorktree, 'finisher-note.txt'), 'pending branch finish\n', 'utf8');
+
+  const finishLog = path.join(repoDir, '.finish-invocations.log');
+  fs.writeFileSync(
+    path.join(repoDir, 'scripts', 'agent-branch-finish.sh'),
+    '#!/usr/bin/env bash\n' +
+      'set -euo pipefail\n' +
+      `printf '%s\\n' \"$*\" >> \"${finishLog}\"\n`,
+    'utf8',
+  );
+  fs.chmodSync(path.join(repoDir, 'scripts', 'agent-branch-finish.sh'), 0o755);
+
+  result = runNode(
+    ['finish', '--target', repoDir, '--branch', agentBranch, '--base', 'main', '--no-wait-for-merge', '--no-cleanup'],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, new RegExp(`Finishing '${escapeRegexLiteral(agentBranch)}' -> 'main'`));
+  assert.match(result.stdout, /Auto-committed/);
+  assert.match(result.stdout, /Finish summary: total=1, success=1, failed=0, autoCommitted=1/);
+
+  const finishInvocations = fs.readFileSync(finishLog, 'utf8');
+  assert.match(finishInvocations, new RegExp(`--branch ${escapeRegexLiteral(agentBranch)}`));
+  assert.match(finishInvocations, /--base main/);
+  assert.match(finishInvocations, /--via-pr/);
+  assert.match(finishInvocations, /--no-wait-for-merge/);
+  assert.match(finishInvocations, /--no-cleanup/);
+
+  const worktreeStatus = runCmd('git', ['status', '--short'], agentWorktree);
+  assert.equal(worktreeStatus.status, 0, worktreeStatus.stderr || worktreeStatus.stdout);
+  assert.equal(worktreeStatus.stdout.trim(), '', 'agent worktree should be clean after auto-commit');
+
+  const latestSubject = runCmd('git', ['log', '-1', '--pretty=%s'], agentWorktree);
+  assert.equal(latestSubject.status, 0, latestSubject.stderr || latestSubject.stdout);
+  assert.equal(latestSubject.stdout.trim(), `Auto-finish: ${agentBranch}`);
 });
 
 test('status prints GitHub CLI service with friendly label', () => {

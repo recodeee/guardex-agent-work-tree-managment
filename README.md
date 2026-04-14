@@ -71,6 +71,12 @@ gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
 If you use `scripts/codex-agent.sh`, the finish flow is auto-run after the Codex session exits.
 It auto-commits sandbox changes, retries once after syncing if the branch moved behind base during the run, then pushes/opens PR merge flow against the current base branch.
 
+If you run Codex in multiple existing agent worktrees directly (for example from VS Code Source Control), finalize all completed branches with:
+
+```sh
+gx finish --all
+```
+
 ## Visual workflow
 
 ### Setup status
@@ -117,6 +123,9 @@ gx sync
 
 # continuously monitor open PRs targeting current branch and dispatch codex-agent review/merge tasks
 gx review --interval 30
+
+# auto-commit finished agent branches and open/merge PR flow in one pass
+gx finish --all
 
 # cleanup merged agent branches and hide clean stale agent worktrees
 gx cleanup
