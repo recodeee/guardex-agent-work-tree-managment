@@ -89,6 +89,10 @@ It auto-commits sandbox changes, retries once after syncing if the branch moved 
 
 ![gx lock and delete guard screenshot](https://raw.githubusercontent.com/recodeecom/multiagent-safety/main/docs/images/workflow-lock-guard.svg)
 
+### Real VS Code Source Control layout (exact screenshot)
+
+![Real VS Code Source Control layout](https://raw.githubusercontent.com/recodeecom/multiagent-safety/main/docs/images/workflow-vscode-source-control-exact.png)
+
 ## Copy-paste: common commands
 
 ```sh
