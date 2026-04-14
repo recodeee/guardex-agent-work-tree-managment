@@ -271,6 +271,12 @@ npm pack --dry-run
 
 ## Release notes
 
+### v5.0.9
+
+- Enforced OpenSpec workspace bootstrap for sandbox agent execution: `scripts/codex-agent.sh` now initializes `openspec/plan/<agent-branch-slug>/` before launching Codex, and `scripts/agent-branch-start.sh` supports `MUSAFETY_OPENSPEC_AUTO_INIT` plus `MUSAFETY_OPENSPEC_PLAN_SLUG`.
+- Tightened doctor auto-finish correctness: sandbox finish now waits for merge and exits non-zero if the PR closes without merge, so repair flows are not reported as complete when policy blocks merge.
+- Updated package version from `5.0.8` to `5.0.9` for the next npm publish.
+
 ### v5.0.8
 
 - Fixed `bin/multiagent-safety.js` syntax regressions in the doctor sandbox flow (`Unexpected identifier` / `Unexpected end of input`) that were breaking CLI execution and CI tests.
