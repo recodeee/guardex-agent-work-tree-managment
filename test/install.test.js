@@ -282,6 +282,12 @@ test('setup provisions workflow files and repo config', () => {
     assert.equal(fs.existsSync(path.join(repoDir, relativePath)), true, `${relativePath} missing`);
   }
 
+  const guardexSkill = fs.readFileSync(path.join(repoDir, '.codex', 'skills', 'guardex', 'SKILL.md'), 'utf8');
+  assert.match(guardexSkill, /Bulk merge runbook \(changed agent branches\)/);
+  assert.match(guardexSkill, /gx finish --all/);
+  assert.match(guardexSkill, /gh pr create --base/);
+  assert.match(guardexSkill, /gh pr merge "<pr-number>" --squash --delete-branch/);
+
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
   assert.equal(packageJson.scripts['agent:codex'], 'bash ./scripts/codex-agent.sh');
   assert.equal(packageJson.scripts['agent:review:watch'], 'bash ./scripts/review-bot-watch.sh');
