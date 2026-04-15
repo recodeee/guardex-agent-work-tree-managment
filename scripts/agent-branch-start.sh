@@ -321,9 +321,28 @@ fi
 auto_transfer_stash_ref=""
 auto_transfer_message=""
 auto_transfer_source_branch=""
+auto_transfer_commits=0
+auto_transfer_commit_count=0
+auto_transfer_reset_ref=""
+branch_start_ref="$start_ref"
 current_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 protected_branches_raw="$(resolve_protected_branches "$repo_root")"
 if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]] && is_protected_branch_name "$current_branch" "$protected_branches_raw"; then
+  if [[ "$current_branch" == "$BASE_BRANCH" ]]; then
+    ahead_count="$(
+      git -C "$repo_root" rev-list --count "${start_ref}..${current_branch}" 2>/dev/null \
+        | tr -d '[:space:]'
+    )"
+    if [[ "$ahead_count" =~ ^[0-9]+$ ]] && [[ "$ahead_count" -gt 0 ]]; then
+      auto_transfer_commits=1
+      auto_transfer_commit_count="$ahead_count"
+      auto_transfer_source_branch="$current_branch"
+      auto_transfer_reset_ref="$start_ref"
+      branch_start_ref="$current_branch"
+      echo "[agent-branch-start] Detected ${ahead_count} local commit(s) on protected branch '${current_branch}'. Moving them to '${branch_name}' and resetting '${current_branch}' to '${start_ref}'."
+    fi
+  fi
+
   if has_local_changes "$repo_root"; then
     auto_transfer_message="musafety-auto-transfer-${timestamp}-${agent_slug}-${task_slug}"
     if git -C "$repo_root" stash push --include-untracked --message "$auto_transfer_message" >/dev/null 2>&1; then
@@ -339,7 +358,7 @@ if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]] && is_protected_bra
   fi
 fi
 
-git -C "$repo_root" worktree add -b "$branch_name" "$worktree_path" "$start_ref"
+git -C "$repo_root" worktree add -b "$branch_name" "$worktree_path" "$branch_start_ref"
 git -C "$repo_root" config "branch.${branch_name}.musafetyBase" "$BASE_BRANCH" >/dev/null 2>&1 || true
 
 if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/${BASE_BRANCH}"; then
@@ -356,6 +375,17 @@ if [[ -n "$auto_transfer_stash_ref" ]]; then
     transfer_label="${auto_transfer_source_branch:-$BASE_BRANCH}"
     echo "[agent-branch-start] Changes are preserved in ${auto_transfer_stash_ref} on ${transfer_label}." >&2
     echo "[agent-branch-start] Apply manually with: git -C \"$worktree_path\" stash apply \"${auto_transfer_stash_ref}\"" >&2
+    exit 1
+  fi
+fi
+
+if [[ "$auto_transfer_commits" -eq 1 ]]; then
+  if git -C "$repo_root" reset --hard "$auto_transfer_reset_ref" >/dev/null 2>&1; then
+    transfer_label="${auto_transfer_source_branch:-$BASE_BRANCH}"
+    echo "[agent-branch-start] Moved ${auto_transfer_commit_count} local commit(s) from '${transfer_label}' into '${branch_name}'."
+  else
+    echo "[agent-branch-start] Failed to reset protected branch '${auto_transfer_source_branch}' to '${auto_transfer_reset_ref}' after transfer." >&2
+    echo "[agent-branch-start] The commits remain on '${branch_name}'. Resolve manually in '${repo_root}'." >&2
     exit 1
   fi
 fi
