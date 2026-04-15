@@ -30,7 +30,7 @@ fi
 
 allow_vscode_protected_raw="${MUSAFETY_ALLOW_VSCODE_PROTECTED_BRANCH_WRITES:-$(git config --get multiagent.allowVscodeProtectedBranchWrites || true)}"
 if [[ -z "$allow_vscode_protected_raw" ]]; then
-  allow_vscode_protected_raw="true"
+  allow_vscode_protected_raw="false"
 fi
 allow_vscode_protected="$(printf '%s' "$allow_vscode_protected_raw" | tr '[:upper:]' '[:lower:]')"
 
@@ -54,15 +54,6 @@ for protected_branch in $protected_branches_raw; do
     break
   fi
 done
-
-is_local_only_branch=0
-if [[ "$is_protected_branch" == "1" ]]; then
-  upstream_ref="$(git for-each-ref --format='%(upstream:short)' "refs/heads/${branch}" | head -n 1)"
-  remote_branch_ref="$(git for-each-ref --format='%(refname:short)' "refs/remotes/*/${branch}" | head -n 1)"
-  if [[ -z "$upstream_ref" && -z "$remote_branch_ref" ]]; then
-    is_local_only_branch=1
-  fi
-fi
 
 codex_require_agent_branch_raw="${MUSAFETY_CODEX_REQUIRE_AGENT_BRANCH:-$(git config --get multiagent.codexRequireAgentBranch || true)}"
 if [[ -z "$codex_require_agent_branch_raw" ]]; then
@@ -134,7 +125,7 @@ fi
 
 if [[ "$is_protected_branch" == "1" ]]; then
   if [[ "$is_codex_session" != "1" && "$is_vscode_git_context" == "1" ]]; then
-    if [[ "$allow_vscode_protected_branch_writes" == "1" || "$is_local_only_branch" == "1" ]]; then
+    if [[ "$allow_vscode_protected_branch_writes" == "1" ]]; then
       exit 0
     fi
   fi
@@ -155,11 +146,21 @@ Use an agent branch first:
 After finishing work:
   bash scripts/agent-branch-finish.sh
 
-Optional repo hard-block for VS Code protected-branch commits:
-  git config multiagent.allowVscodeProtectedBranchWrites false
+Optional repo opt-in for VS Code protected-branch commits:
+  git config multiagent.allowVscodeProtectedBranchWrites true
 
-VS Code Source Control commits on protected local-only branches
-(no upstream and no remote branch) are allowed automatically.
+Temporary bypass (not recommended):
+  ALLOW_COMMIT_ON_PROTECTED_BRANCH=1 git commit ...
+MSG
+  exit 1
+fi
+
+if [[ "$is_agent_context" == "1" && "$branch" != agent/* ]]; then
+  cat >&2 <<'MSG'
+[agent-branch-guard] Agent commits must run on dedicated agent/* branches.
+Start an agent branch first:
+  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+Then commit on that branch.
 
 Temporary bypass (not recommended):
   ALLOW_COMMIT_ON_PROTECTED_BRANCH=1 git commit ...
@@ -168,6 +169,14 @@ MSG
 fi
 
 if [[ "$branch" == agent/* ]]; then
+  if [[ "${MUSAFETY_AUTOCLAIM_STAGED_LOCKS:-1}" == "1" ]]; then
+    while IFS= read -r staged_file; do
+      [[ -z "$staged_file" ]] && continue
+      [[ "$staged_file" == ".omx/state/agent-file-locks.json" ]] && continue
+      python3 scripts/agent-file-locks.py claim --branch "$branch" "$staged_file" >/dev/null 2>&1 || true
+    done < <(git diff --cached --name-only --diff-filter=ACMRDTUXB)
+  fi
+
   if ! python3 scripts/agent-file-locks.py validate --branch "$branch" --staged; then
     cat >&2 <<'MSG'
 [agent-branch-guard] Agent branch commits require file ownership locks.

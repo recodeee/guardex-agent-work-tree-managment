@@ -56,6 +56,26 @@ const TEMPLATE_FILES = [
   'github/workflows/cr.yml',
 ];
 
+const REQUIRED_WORKFLOW_FILES = [
+  'scripts/agent-branch-start.sh',
+  'scripts/agent-branch-finish.sh',
+  'scripts/agent-worktree-prune.sh',
+  'scripts/agent-file-locks.py',
+  'scripts/install-agent-git-hooks.sh',
+  '.githooks/pre-commit',
+  '.omx/state/agent-file-locks.json',
+];
+
+const REQUIRED_PACKAGE_SCRIPTS = {
+  'agent:branch:start': 'bash ./scripts/agent-branch-start.sh',
+  'agent:branch:finish': 'bash ./scripts/agent-branch-finish.sh',
+  'agent:cleanup': 'bash ./scripts/agent-worktree-prune.sh',
+  'agent:hooks:install': 'bash ./scripts/install-agent-git-hooks.sh',
+  'agent:locks:claim': 'python3 ./scripts/agent-file-locks.py claim',
+  'agent:locks:release': 'python3 ./scripts/agent-file-locks.py release',
+  'agent:locks:status': 'python3 ./scripts/agent-file-locks.py status',
+};
+
 const EXECUTABLE_RELATIVE_PATHS = new Set([
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
@@ -696,7 +716,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
 
   pkg.scripts = pkg.scripts || {};
   let changed = false;
-  for (const [key, value] of Object.entries(wantedScripts)) {
+  for (const [key, value] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
     if (pkg.scripts[key] !== value) {
       pkg.scripts[key] = value;
       changed = true;
@@ -809,8 +829,8 @@ function parseCommonArgs(rawArgs, defaults) {
 
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
-    if (arg === '--target') {
-      options.target = rawArgs[index + 1];
+    if (arg === '--target' || arg === '-t') {
+      options.target = requireValue(rawArgs, index, '--target');
       index += 1;
       continue;
     }
@@ -2365,10 +2385,6 @@ function parseSyncArgs(rawArgs) {
       continue;
     }
     throw new Error(`Unknown option: ${arg}`);
-  }
-
-  if (!options.target) {
-    throw new Error('--target requires a path value');
   }
 
   return options;
@@ -4270,6 +4286,238 @@ function release(rawArgs) {
 
   console.log(`[${TOOL_NAME}] ✅ Publish complete.`);
   process.exitCode = 0;
+}
+
+function installMany(rawArgs) {
+  const options = parseInstallManyArgs(rawArgs);
+  const targets = collectInstallManyTargets(options);
+
+  if (!targets.length) {
+    throw new Error('install-many did not find any targets to process.');
+  }
+
+  if (options.usedImplicitWorkspaceDefault) {
+    console.log(
+      `[multiagent-safety] No explicit targets provided. Defaulting to workspace scan: ${path.resolve(
+        options.workspace,
+      )} (max depth ${options.maxDepth})`,
+    );
+  }
+
+  console.log(
+    `[multiagent-safety] install-many starting for ${targets.length} target path(s)${
+      options.dryRun ? ' [dry-run]' : ''
+    }`,
+  );
+
+  let installed = 0;
+  let duplicateRepos = 0;
+  const seenRepoRoots = new Set();
+  const failures = [];
+
+  for (const targetPath of targets) {
+    let repoRoot;
+    try {
+      repoRoot = resolveRepoRoot(targetPath);
+    } catch (error) {
+      failures.push({ target: targetPath, message: error.message });
+      if (options.failFast) {
+        break;
+      }
+      continue;
+    }
+
+    if (seenRepoRoots.has(repoRoot)) {
+      duplicateRepos += 1;
+      console.log(`[multiagent-safety] Skipping duplicate repo target: ${targetPath} -> ${repoRoot}`);
+      continue;
+    }
+
+    seenRepoRoots.add(repoRoot);
+
+    try {
+      const report = installIntoRepoRoot(repoRoot, options);
+      printInstallReport(report);
+      installed += 1;
+    } catch (error) {
+      failures.push({ target: repoRoot, message: error.message });
+      if (options.failFast) {
+        break;
+      }
+    }
+  }
+
+  console.log(
+    `[multiagent-safety] install-many summary: installed=${installed}, failures=${failures.length}, duplicate-targets=${duplicateRepos}`,
+  );
+
+  if (failures.length > 0) {
+    console.error('[multiagent-safety] Failed targets:');
+    for (const failure of failures) {
+      console.error(`  - ${failure.target}`);
+      console.error(`    ${failure.message}`);
+    }
+    throw new Error(`install-many completed with ${failures.length} failure(s)`);
+  }
+
+  if (options.dryRun) {
+    console.log('[multiagent-safety] Dry run complete. No files were modified.');
+  } else {
+    console.log('[multiagent-safety] Installed multi-agent safety workflow across all targets.');
+  }
+}
+
+function initWorkspace(rawArgs) {
+  const options = parseInitWorkspaceArgs(rawArgs);
+  const resolvedWorkspace = path.resolve(options.workspace);
+  const repos = discoverGitRepos(resolvedWorkspace, options.maxDepth)
+    .map((repoPath) => path.resolve(repoPath))
+    .sort();
+
+  const outputPath = options.output
+    ? path.resolve(options.output)
+    : path.join(resolvedWorkspace, DEFAULT_WORKSPACE_TARGETS_FILE);
+
+  if (fs.existsSync(outputPath) && !options.force) {
+    throw new Error(`Refusing to overwrite existing file without --force: ${outputPath}`);
+  }
+
+  const headerLines = [
+    '# multiagent-safety workspace targets',
+    `# generated: ${new Date().toISOString()}`,
+    `# workspace: ${resolvedWorkspace}`,
+    `# max-depth: ${options.maxDepth}`,
+    '#',
+    '# Run:',
+    `# multiagent-safety install-many --targets-file "${outputPath}"`,
+    '',
+  ];
+  const content = `${headerLines.join('\n')}${repos.join('\n')}${repos.length ? '\n' : ''}`;
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, content, 'utf8');
+
+  console.log(`[multiagent-safety] Workspace target file written: ${outputPath}`);
+  console.log(`[multiagent-safety] Repos discovered: ${repos.length}`);
+  if (repos.length === 0) {
+    console.log('[multiagent-safety] No git repos found. You can add target paths manually to the file.');
+  } else {
+    console.log(`[multiagent-safety] Next step: multiagent-safety install-many --targets-file "${outputPath}"`);
+  }
+}
+
+function doctor(rawArgs) {
+  const options = parseDoctorArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const failures = [];
+  const warnings = [];
+
+  function ok(message) {
+    console.log(`  [ok]   ${message}`);
+  }
+  function warn(message) {
+    warnings.push(message);
+    console.log(`  [warn] ${message}`);
+  }
+  function fail(message) {
+    failures.push(message);
+    console.log(`  [fail] ${message}`);
+  }
+
+  console.log(`[multiagent-safety] doctor target: ${repoRoot}`);
+
+  const hooksPath = run('git', ['-C', repoRoot, 'config', '--get', 'core.hooksPath']);
+  if (hooksPath.status !== 0) {
+    fail('git core.hooksPath is not configured');
+  } else if (hooksPath.stdout.trim() !== '.githooks') {
+    fail(`git core.hooksPath is "${hooksPath.stdout.trim()}" (expected ".githooks")`);
+  } else {
+    ok('git core.hooksPath is .githooks');
+  }
+
+  for (const relativePath of REQUIRED_WORKFLOW_FILES) {
+    const absolutePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(absolutePath)) {
+      fail(`missing ${relativePath}`);
+      continue;
+    }
+    ok(`found ${relativePath}`);
+
+    if (EXECUTABLE_RELATIVE_PATHS.has(relativePath)) {
+      try {
+        fs.accessSync(absolutePath, fs.constants.X_OK);
+      } catch {
+        fail(`${relativePath} exists but is not executable`);
+      }
+    }
+  }
+
+  const lockFilePath = path.join(repoRoot, '.omx/state/agent-file-locks.json');
+  if (fs.existsSync(lockFilePath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(lockFilePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.locks !== 'object') {
+        fail('.omx/state/agent-file-locks.json does not contain a valid { locks: {} } object');
+      } else {
+        ok('lock registry JSON is valid');
+      }
+    } catch (error) {
+      fail(`lock registry JSON is invalid: ${error.message}`);
+    }
+  }
+
+  const packagePath = path.join(repoRoot, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    warn('package.json not found (npm helper scripts cannot be verified)');
+  } else {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const scripts = pkg.scripts || {};
+      for (const [name, expectedValue] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
+        if (scripts[name] !== expectedValue) {
+          fail(`package.json script mismatch for "${name}"`);
+        } else {
+          ok(`package.json script "${name}" is configured`);
+        }
+      }
+    } catch (error) {
+      fail(`package.json is invalid JSON: ${error.message}`);
+    }
+  }
+
+  const agentsPath = path.join(repoRoot, 'AGENTS.md');
+  if (!fs.existsSync(agentsPath)) {
+    warn('AGENTS.md not found (multi-agent contract snippet not present)');
+  } else {
+    const agentsContent = fs.readFileSync(agentsPath, 'utf8');
+    if (!agentsContent.includes(AGENTS_MARKER_START)) {
+      warn('AGENTS.md exists but multiagent-safety snippet marker is missing');
+    } else {
+      ok('AGENTS.md contains multiagent-safety snippet marker');
+    }
+  }
+
+  if (warnings.length) {
+    console.log(`[multiagent-safety] warnings: ${warnings.length}`);
+  }
+  if (failures.length) {
+    console.log(`[multiagent-safety] failures: ${failures.length}`);
+  }
+
+  if (failures.length === 0 && (!options.strict || warnings.length === 0)) {
+    console.log('[multiagent-safety] doctor passed.');
+    if (warnings.length > 0) {
+      console.log('[multiagent-safety] tip: run with --strict to treat warnings as failures.');
+    }
+    return;
+  }
+
+  if (options.strict && warnings.length > 0 && failures.length === 0) {
+    console.log('[multiagent-safety] strict mode failed due to warnings.');
+  } else {
+    console.log('[multiagent-safety] doctor failed.');
+  }
+  throw new Error('doctor detected configuration issues');
 }
 
 function printAgentsSnippet() {
