@@ -35,6 +35,7 @@ const GIT_SYNC_STRATEGY_KEY = 'multiagent.sync.strategy';
 const DEFAULT_PROTECTED_BRANCHES = ['dev', 'main', 'master'];
 const DEFAULT_BASE_BRANCH = 'dev';
 const DEFAULT_SYNC_STRATEGY = 'rebase';
+const DEFAULT_SHADOW_CLEANUP_IDLE_MINUTES = 60;
 
 const TEMPLATE_ROOT = path.resolve(__dirname, '..', 'templates');
 
@@ -49,12 +50,34 @@ const TEMPLATE_FILES = [
   'scripts/openspec/init-plan-workspace.sh',
   'githooks/pre-commit',
   'githooks/pre-push',
+  'githooks/post-merge',
   'codex/skills/guardex/SKILL.md',
   'codex/skills/guardex-merge-skills-to-dev/SKILL.md',
   'claude/commands/guardex.md',
   'github/pull.yml.example',
   'github/workflows/cr.yml',
 ];
+
+const REQUIRED_WORKFLOW_FILES = [
+  'scripts/agent-branch-start.sh',
+  'scripts/agent-branch-finish.sh',
+  'scripts/agent-worktree-prune.sh',
+  'scripts/agent-file-locks.py',
+  'scripts/install-agent-git-hooks.sh',
+  '.githooks/pre-commit',
+  '.githooks/post-merge',
+  '.omx/state/agent-file-locks.json',
+];
+
+const REQUIRED_PACKAGE_SCRIPTS = {
+  'agent:branch:start': 'bash ./scripts/agent-branch-start.sh',
+  'agent:branch:finish': 'bash ./scripts/agent-branch-finish.sh',
+  'agent:cleanup': 'bash ./scripts/agent-worktree-prune.sh',
+  'agent:hooks:install': 'bash ./scripts/install-agent-git-hooks.sh',
+  'agent:locks:claim': 'python3 ./scripts/agent-file-locks.py claim',
+  'agent:locks:release': 'python3 ./scripts/agent-file-locks.py release',
+  'agent:locks:status': 'python3 ./scripts/agent-file-locks.py status',
+};
 
 const EXECUTABLE_RELATIVE_PATHS = new Set([
   'scripts/agent-branch-start.sh',
@@ -67,12 +90,14 @@ const EXECUTABLE_RELATIVE_PATHS = new Set([
   'scripts/openspec/init-plan-workspace.sh',
   '.githooks/pre-commit',
   '.githooks/pre-push',
+  '.githooks/post-merge',
 ]);
 
 const CRITICAL_GUARDRAIL_PATHS = new Set([
   'AGENTS.md',
   '.githooks/pre-commit',
   '.githooks/pre-push',
+  '.githooks/post-merge',
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
   'scripts/agent-worktree-prune.sh',
@@ -98,6 +123,7 @@ const MANAGED_GITIGNORE_PATHS = [
   'scripts/openspec/init-plan-workspace.sh',
   '.githooks/pre-commit',
   '.githooks/pre-push',
+  '.githooks/post-merge',
   'oh-my-codex/',
   '.codex/skills/guardex/SKILL.md',
   '.codex/skills/guardex-merge-skills-to-dev/SKILL.md',
@@ -160,7 +186,7 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['copy-commands', 'Print setup checklist as executable commands only'],
   ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
   ['sync', 'Check or sync agent branches with origin/<base>'],
-  ['cleanup', 'Cleanup agent branches/worktrees (supports idle watch mode)'],
+  ['cleanup', 'Cleanup agent branches/worktrees (watch mode defaults to 60-minute idle threshold)'],
   ['agents', 'Start/stop repo-scoped review + cleanup bots'],
   ['install', 'Install templates/locks/hooks without running full setup (supports --no-gitignore)'],
   ['fix', 'Repair broken or missing guardrail files/config (supports --no-gitignore)'],
@@ -201,10 +227,10 @@ const AI_SETUP_PROMPT = `Use this exact checklist to setup GuardeX (Guardian T-R
    bash scripts/codex-agent.sh "task" "agent-name"
    bash scripts/agent-branch-start.sh "task" "agent-name"
    python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
-   bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+   bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)" --base dev --via-pr --wait-for-merge
    - For every new user message/task, repeat the same cycle:
      start isolated agent branch/worktree -> claim file locks -> implement/verify ->
-     finish via PR/merge cleanup with scripts/agent-branch-finish.sh.
+     finish via PR/merge cleanup into dev with scripts/agent-branch-finish.sh.
    - Finished branches stay available by default for audit/follow-up.
      Remove them explicitly when done:
      gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
@@ -263,7 +289,7 @@ gx review --interval 30
 bash scripts/codex-agent.sh "task" "agent-name"
 bash scripts/agent-branch-start.sh "task" "agent-name"
 python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
-bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)"
+bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)" --base dev --via-pr --wait-for-merge
 gx finish --all
 gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
 bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
@@ -696,7 +722,7 @@ function ensurePackageScripts(repoRoot, dryRun) {
 
   pkg.scripts = pkg.scripts || {};
   let changed = false;
-  for (const [key, value] of Object.entries(wantedScripts)) {
+  for (const [key, value] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
     if (pkg.scripts[key] !== value) {
       pkg.scripts[key] = value;
       changed = true;
@@ -809,8 +835,8 @@ function parseCommonArgs(rawArgs, defaults) {
 
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
-    if (arg === '--target') {
-      options.target = rawArgs[index + 1];
+    if (arg === '--target' || arg === '-t') {
+      options.target = requireValue(rawArgs, index, '--target');
       index += 1;
       continue;
     }
@@ -1620,7 +1646,7 @@ function parseAgentsArgs(rawArgs) {
     subcommand,
     reviewIntervalSeconds: 30,
     cleanupIntervalSeconds: 60,
-    idleMinutes: 10,
+    idleMinutes: DEFAULT_SHADOW_CLEANUP_IDLE_MINUTES,
   };
 
   for (let index = 0; index < rest.length; index += 1) {
@@ -2367,10 +2393,6 @@ function parseSyncArgs(rawArgs) {
     throw new Error(`Unknown option: ${arg}`);
   }
 
-  if (!options.target) {
-    throw new Error('--target requires a path value');
-  }
-
   return options;
 }
 
@@ -2383,10 +2405,12 @@ function parseCleanupArgs(rawArgs) {
     forceDirty: false,
     keepRemote: false,
     keepCleanWorktrees: false,
+    includePrMerged: false,
     idleMinutes: 0,
     watch: false,
     intervalSeconds: 60,
     once: false,
+    maxBranches: 0,
   };
 
   for (let index = 0; index < rawArgs.length; index += 1) {
@@ -2434,6 +2458,10 @@ function parseCleanupArgs(rawArgs) {
       options.keepCleanWorktrees = true;
       continue;
     }
+    if (arg === '--include-pr-merged') {
+      options.includePrMerged = true;
+      continue;
+    }
     if (arg === '--idle-minutes') {
       const next = rawArgs[index + 1];
       if (!next) {
@@ -2468,11 +2496,24 @@ function parseCleanupArgs(rawArgs) {
       options.once = true;
       continue;
     }
+    if (arg === '--max-branches') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--max-branches requires an integer value');
+      }
+      const parsed = Number.parseInt(next, 10);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new Error('--max-branches must be an integer >= 1');
+      }
+      options.maxBranches = parsed;
+      index += 1;
+      continue;
+    }
     throw new Error(`Unknown option: ${arg}`);
   }
 
   if (options.watch && options.idleMinutes === 0) {
-    options.idleMinutes = 10;
+    options.idleMinutes = DEFAULT_SHADOW_CLEANUP_IDLE_MINUTES;
   }
 
   return options;
@@ -2766,25 +2807,14 @@ function branchExists(repoRoot, branch) {
   return result.status === 0;
 }
 
-function resolveFinishBaseBranch(repoRoot, sourceBranch, explicitBase) {
+function resolveFinishBaseBranch(repoRoot, _sourceBranch, explicitBase) {
   if (explicitBase) {
     return explicitBase;
-  }
-
-  const branchSpecific = readGitConfig(repoRoot, `branch.${sourceBranch}.musafetyBase`);
-  if (branchSpecific) {
-    return branchSpecific;
   }
 
   const configured = readGitConfig(repoRoot, GIT_BASE_BRANCH_KEY);
   if (configured) {
     return configured;
-  }
-
-  const current = gitRun(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], { allowFailure: true });
-  const currentBranch = String(current.stdout || '').trim();
-  if (current.status === 0 && currentBranch && currentBranch !== 'HEAD' && !currentBranch.startsWith('agent/')) {
-    return currentBranch;
   }
 
   return DEFAULT_BASE_BRANCH;
@@ -3937,37 +3967,60 @@ function agents(rawArgs) {
       return;
     }
 
-    if (reviewRunning) {
-      stopAgentProcessByPid(existingReviewPid, 'review-bot-watch.sh');
-    }
-    if (cleanupRunning) {
-      stopAgentProcessByPid(existingCleanupPid, `${path.basename(__filename)} cleanup`);
-    }
-
     const reviewLogPath = path.join(repoRoot, '.omx', 'logs', 'agent-review.log');
     const cleanupLogPath = path.join(repoRoot, '.omx', 'logs', 'agent-cleanup.log');
-    const reviewPid = spawnDetachedAgentProcess({
-      command: 'bash',
-      args: [reviewScriptPath, '--interval', String(options.reviewIntervalSeconds)],
-      cwd: repoRoot,
-      logPath: reviewLogPath,
-    });
-    const cleanupPid = spawnDetachedAgentProcess({
-      command: process.execPath,
-      args: [
-        path.resolve(__filename),
-        'cleanup',
-        '--target',
-        repoRoot,
-        '--watch',
-        '--interval',
-        String(options.cleanupIntervalSeconds),
-        '--idle-minutes',
-        String(options.idleMinutes),
-      ],
-      cwd: repoRoot,
-      logPath: cleanupLogPath,
-    });
+
+    let reviewPid = existingReviewPid;
+    let cleanupPid = existingCleanupPid;
+    let startedAny = false;
+    let reusedAny = false;
+
+    if (!reviewRunning) {
+      reviewPid = spawnDetachedAgentProcess({
+        command: 'bash',
+        args: [reviewScriptPath, '--interval', String(options.reviewIntervalSeconds)],
+        cwd: repoRoot,
+        logPath: reviewLogPath,
+      });
+      startedAny = true;
+    } else {
+      reusedAny = true;
+    }
+
+    if (!cleanupRunning) {
+      cleanupPid = spawnDetachedAgentProcess({
+        command: process.execPath,
+        args: [
+          path.resolve(__filename),
+          'cleanup',
+          '--target',
+          repoRoot,
+          '--watch',
+          '--interval',
+          String(options.cleanupIntervalSeconds),
+          '--idle-minutes',
+          String(options.idleMinutes),
+        ],
+        cwd: repoRoot,
+        logPath: cleanupLogPath,
+      });
+      startedAny = true;
+    } else {
+      reusedAny = true;
+    }
+
+    const priorReviewInterval = Number.parseInt(String(existingState?.review?.intervalSeconds || ''), 10);
+    const priorCleanupInterval = Number.parseInt(String(existingState?.cleanup?.intervalSeconds || ''), 10);
+    const priorIdleMinutes = Number.parseInt(String(existingState?.cleanup?.idleMinutes || ''), 10);
+    const reviewIntervalSeconds = reviewRunning && Number.isInteger(priorReviewInterval) && priorReviewInterval >= 5
+      ? priorReviewInterval
+      : options.reviewIntervalSeconds;
+    const cleanupIntervalSeconds = cleanupRunning && Number.isInteger(priorCleanupInterval) && priorCleanupInterval >= 5
+      ? priorCleanupInterval
+      : options.cleanupIntervalSeconds;
+    const idleMinutes = cleanupRunning && Number.isInteger(priorIdleMinutes) && priorIdleMinutes >= 1
+      ? priorIdleMinutes
+      : options.idleMinutes;
 
     writeAgentsState(repoRoot, {
       schemaVersion: 1,
@@ -3975,14 +4028,14 @@ function agents(rawArgs) {
       startedAt: new Date().toISOString(),
       review: {
         pid: reviewPid,
-        intervalSeconds: options.reviewIntervalSeconds,
+        intervalSeconds: reviewIntervalSeconds,
         script: reviewScriptPath,
         logPath: reviewLogPath,
       },
       cleanup: {
         pid: cleanupPid,
-        intervalSeconds: options.cleanupIntervalSeconds,
-        idleMinutes: options.idleMinutes,
+        intervalSeconds: cleanupIntervalSeconds,
+        idleMinutes,
         script: path.resolve(__filename),
         logPath: cleanupLogPath,
       },
@@ -3991,6 +4044,9 @@ function agents(rawArgs) {
     console.log(
       `[${TOOL_NAME}] Started repo agents in ${repoRoot} (review pid=${reviewPid}, cleanup pid=${cleanupPid}).`,
     );
+    if (reusedAny && startedAny) {
+      console.log(`[${TOOL_NAME}] Reused healthy bot process(es) and started only missing ones.`);
+    }
     console.log(`[${TOOL_NAME}] Logs: ${reviewLogPath}, ${cleanupLogPath}`);
     process.exitCode = 0;
     return;
@@ -4272,6 +4328,238 @@ function release(rawArgs) {
   process.exitCode = 0;
 }
 
+function installMany(rawArgs) {
+  const options = parseInstallManyArgs(rawArgs);
+  const targets = collectInstallManyTargets(options);
+
+  if (!targets.length) {
+    throw new Error('install-many did not find any targets to process.');
+  }
+
+  if (options.usedImplicitWorkspaceDefault) {
+    console.log(
+      `[multiagent-safety] No explicit targets provided. Defaulting to workspace scan: ${path.resolve(
+        options.workspace,
+      )} (max depth ${options.maxDepth})`,
+    );
+  }
+
+  console.log(
+    `[multiagent-safety] install-many starting for ${targets.length} target path(s)${
+      options.dryRun ? ' [dry-run]' : ''
+    }`,
+  );
+
+  let installed = 0;
+  let duplicateRepos = 0;
+  const seenRepoRoots = new Set();
+  const failures = [];
+
+  for (const targetPath of targets) {
+    let repoRoot;
+    try {
+      repoRoot = resolveRepoRoot(targetPath);
+    } catch (error) {
+      failures.push({ target: targetPath, message: error.message });
+      if (options.failFast) {
+        break;
+      }
+      continue;
+    }
+
+    if (seenRepoRoots.has(repoRoot)) {
+      duplicateRepos += 1;
+      console.log(`[multiagent-safety] Skipping duplicate repo target: ${targetPath} -> ${repoRoot}`);
+      continue;
+    }
+
+    seenRepoRoots.add(repoRoot);
+
+    try {
+      const report = installIntoRepoRoot(repoRoot, options);
+      printInstallReport(report);
+      installed += 1;
+    } catch (error) {
+      failures.push({ target: repoRoot, message: error.message });
+      if (options.failFast) {
+        break;
+      }
+    }
+  }
+
+  console.log(
+    `[multiagent-safety] install-many summary: installed=${installed}, failures=${failures.length}, duplicate-targets=${duplicateRepos}`,
+  );
+
+  if (failures.length > 0) {
+    console.error('[multiagent-safety] Failed targets:');
+    for (const failure of failures) {
+      console.error(`  - ${failure.target}`);
+      console.error(`    ${failure.message}`);
+    }
+    throw new Error(`install-many completed with ${failures.length} failure(s)`);
+  }
+
+  if (options.dryRun) {
+    console.log('[multiagent-safety] Dry run complete. No files were modified.');
+  } else {
+    console.log('[multiagent-safety] Installed multi-agent safety workflow across all targets.');
+  }
+}
+
+function initWorkspace(rawArgs) {
+  const options = parseInitWorkspaceArgs(rawArgs);
+  const resolvedWorkspace = path.resolve(options.workspace);
+  const repos = discoverGitRepos(resolvedWorkspace, options.maxDepth)
+    .map((repoPath) => path.resolve(repoPath))
+    .sort();
+
+  const outputPath = options.output
+    ? path.resolve(options.output)
+    : path.join(resolvedWorkspace, DEFAULT_WORKSPACE_TARGETS_FILE);
+
+  if (fs.existsSync(outputPath) && !options.force) {
+    throw new Error(`Refusing to overwrite existing file without --force: ${outputPath}`);
+  }
+
+  const headerLines = [
+    '# multiagent-safety workspace targets',
+    `# generated: ${new Date().toISOString()}`,
+    `# workspace: ${resolvedWorkspace}`,
+    `# max-depth: ${options.maxDepth}`,
+    '#',
+    '# Run:',
+    `# multiagent-safety install-many --targets-file "${outputPath}"`,
+    '',
+  ];
+  const content = `${headerLines.join('\n')}${repos.join('\n')}${repos.length ? '\n' : ''}`;
+
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  fs.writeFileSync(outputPath, content, 'utf8');
+
+  console.log(`[multiagent-safety] Workspace target file written: ${outputPath}`);
+  console.log(`[multiagent-safety] Repos discovered: ${repos.length}`);
+  if (repos.length === 0) {
+    console.log('[multiagent-safety] No git repos found. You can add target paths manually to the file.');
+  } else {
+    console.log(`[multiagent-safety] Next step: multiagent-safety install-many --targets-file "${outputPath}"`);
+  }
+}
+
+function doctor(rawArgs) {
+  const options = parseDoctorArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const failures = [];
+  const warnings = [];
+
+  function ok(message) {
+    console.log(`  [ok]   ${message}`);
+  }
+  function warn(message) {
+    warnings.push(message);
+    console.log(`  [warn] ${message}`);
+  }
+  function fail(message) {
+    failures.push(message);
+    console.log(`  [fail] ${message}`);
+  }
+
+  console.log(`[multiagent-safety] doctor target: ${repoRoot}`);
+
+  const hooksPath = run('git', ['-C', repoRoot, 'config', '--get', 'core.hooksPath']);
+  if (hooksPath.status !== 0) {
+    fail('git core.hooksPath is not configured');
+  } else if (hooksPath.stdout.trim() !== '.githooks') {
+    fail(`git core.hooksPath is "${hooksPath.stdout.trim()}" (expected ".githooks")`);
+  } else {
+    ok('git core.hooksPath is .githooks');
+  }
+
+  for (const relativePath of REQUIRED_WORKFLOW_FILES) {
+    const absolutePath = path.join(repoRoot, relativePath);
+    if (!fs.existsSync(absolutePath)) {
+      fail(`missing ${relativePath}`);
+      continue;
+    }
+    ok(`found ${relativePath}`);
+
+    if (EXECUTABLE_RELATIVE_PATHS.has(relativePath)) {
+      try {
+        fs.accessSync(absolutePath, fs.constants.X_OK);
+      } catch {
+        fail(`${relativePath} exists but is not executable`);
+      }
+    }
+  }
+
+  const lockFilePath = path.join(repoRoot, '.omx/state/agent-file-locks.json');
+  if (fs.existsSync(lockFilePath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(lockFilePath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || typeof parsed.locks !== 'object') {
+        fail('.omx/state/agent-file-locks.json does not contain a valid { locks: {} } object');
+      } else {
+        ok('lock registry JSON is valid');
+      }
+    } catch (error) {
+      fail(`lock registry JSON is invalid: ${error.message}`);
+    }
+  }
+
+  const packagePath = path.join(repoRoot, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    warn('package.json not found (npm helper scripts cannot be verified)');
+  } else {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+      const scripts = pkg.scripts || {};
+      for (const [name, expectedValue] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
+        if (scripts[name] !== expectedValue) {
+          fail(`package.json script mismatch for "${name}"`);
+        } else {
+          ok(`package.json script "${name}" is configured`);
+        }
+      }
+    } catch (error) {
+      fail(`package.json is invalid JSON: ${error.message}`);
+    }
+  }
+
+  const agentsPath = path.join(repoRoot, 'AGENTS.md');
+  if (!fs.existsSync(agentsPath)) {
+    warn('AGENTS.md not found (multi-agent contract snippet not present)');
+  } else {
+    const agentsContent = fs.readFileSync(agentsPath, 'utf8');
+    if (!agentsContent.includes(AGENTS_MARKER_START)) {
+      warn('AGENTS.md exists but multiagent-safety snippet marker is missing');
+    } else {
+      ok('AGENTS.md contains multiagent-safety snippet marker');
+    }
+  }
+
+  if (warnings.length) {
+    console.log(`[multiagent-safety] warnings: ${warnings.length}`);
+  }
+  if (failures.length) {
+    console.log(`[multiagent-safety] failures: ${failures.length}`);
+  }
+
+  if (failures.length === 0 && (!options.strict || warnings.length === 0)) {
+    console.log('[multiagent-safety] doctor passed.');
+    if (warnings.length > 0) {
+      console.log('[multiagent-safety] tip: run with --strict to treat warnings as failures.');
+    }
+    return;
+  }
+
+  if (options.strict && warnings.length > 0 && failures.length === 0) {
+    console.log('[multiagent-safety] strict mode failed due to warnings.');
+  } else {
+    console.log('[multiagent-safety] doctor failed.');
+  }
+  throw new Error('doctor detected configuration issues');
+}
+
 function printAgentsSnippet() {
   const snippetPath = path.join(TEMPLATE_ROOT, 'AGENTS.multiagent-safety.md');
   process.stdout.write(fs.readFileSync(snippetPath, 'utf8'));
@@ -4311,8 +4599,14 @@ function cleanup(rawArgs) {
   if (!options.keepCleanWorktrees) {
     args.push('--only-dirty-worktrees');
   }
+  if (options.includePrMerged) {
+    args.push('--include-pr-merged');
+  }
   if (options.idleMinutes > 0) {
     args.push('--idle-minutes', String(options.idleMinutes));
+  }
+  if (options.maxBranches > 0) {
+    args.push('--max-branches', String(options.maxBranches));
   }
   args.push('--delete-branches');
   if (!options.keepRemote) {
@@ -4331,7 +4625,7 @@ function cleanup(rawArgs) {
     while (true) {
       cycle += 1;
       console.log(
-        `[${TOOL_NAME}] Cleanup watch cycle=${cycle} (interval=${options.intervalSeconds}s, idleMinutes=${options.idleMinutes}).`,
+        `[${TOOL_NAME}] Cleanup watch cycle=${cycle} (interval=${options.intervalSeconds}s, idleMinutes=${options.idleMinutes}, maxBranches=${options.maxBranches > 0 ? options.maxBranches : "unbounded"}).`,
       );
       runCleanupCycle();
       if (options.once) {

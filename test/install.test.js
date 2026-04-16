@@ -90,10 +90,12 @@ function initRepo() {
   result = runCmd('git', ['config', 'user.name', 'Bot'], repoDir);
   assert.equal(result.status, 0, result.stderr);
 
-  fs.writeFileSync(
-    path.join(repoDir, 'package.json'),
-    JSON.stringify({ name: 'demo', private: true, scripts: {} }, null, 2) + '\n',
-  );
+  if (withPackageJson) {
+    fs.writeFileSync(
+      path.join(repoDir, 'package.json'),
+      JSON.stringify({ name: path.basename(repoDir), private: true, scripts: {} }, null, 2) + '\n',
+    );
+  }
 
   return repoDir;
 }
@@ -271,6 +273,7 @@ test('setup provisions workflow files and repo config', () => {
     'scripts/openspec/init-plan-workspace.sh',
     '.githooks/pre-commit',
     '.githooks/pre-push',
+    '.githooks/post-merge',
     '.codex/skills/guardex/SKILL.md',
     '.codex/skills/guardex-merge-skills-to-dev/SKILL.md',
     '.claude/commands/guardex.md',
@@ -318,6 +321,7 @@ test('setup provisions workflow files and repo config', () => {
   assert.match(gitignoreContent, /scripts\/agent-file-locks\.py/);
   assert.match(gitignoreContent, /\.githooks\/pre-commit/);
   assert.match(gitignoreContent, /\.githooks\/pre-push/);
+  assert.match(gitignoreContent, /\.githooks\/post-merge/);
   assert.match(gitignoreContent, /\.omx\//);
   assert.match(gitignoreContent, /oh-my-codex\//);
   assert.match(gitignoreContent, /\.codex\/skills\/guardex\/SKILL\.md/);
@@ -1382,6 +1386,109 @@ test('agents command starts review+cleanup bots for the target repo and stops th
   assert.equal(fs.existsSync(statePath), false, 'agents stop should remove state file');
 });
 
+test('agents start reuses running review bot when only cleanup bot is missing', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+  const scriptsDir = path.join(repoDir, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+
+  const reviewScriptPath = path.join(scriptsDir, 'review-bot-watch.sh');
+  fs.writeFileSync(
+    reviewScriptPath,
+    '#!/usr/bin/env bash\n' +
+      'set -euo pipefail\n' +
+      'while true; do sleep 60; done\n',
+    'utf8',
+  );
+  fs.chmodSync(reviewScriptPath, 0o755);
+
+  const pruneScriptPath = path.join(scriptsDir, 'agent-worktree-prune.sh');
+  fs.writeFileSync(
+    pruneScriptPath,
+    '#!/usr/bin/env bash\n' +
+      'set -euo pipefail\n' +
+      'exit 0\n',
+    'utf8',
+  );
+  fs.chmodSync(pruneScriptPath, 0o755);
+
+  let result = runNode(
+    ['agents', 'start', '--target', repoDir, '--review-interval', '31', '--cleanup-interval', '47', '--idle-minutes', '12'],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const statePath = path.join(repoDir, '.omx', 'state', 'agents-bots.json');
+  const firstState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  const firstReviewPid = firstState.review.pid;
+  const firstCleanupPid = firstState.cleanup.pid;
+  assert.equal(isPidAlive(firstReviewPid), true, 'review bot should be alive after initial start');
+  assert.equal(isPidAlive(firstCleanupPid), true, 'cleanup bot should be alive after initial start');
+
+  process.kill(firstCleanupPid, 'SIGTERM');
+  assert.equal(waitForPidExit(firstCleanupPid), true, 'cleanup bot should stop during simulation');
+  assert.equal(isPidAlive(firstReviewPid), true, 'review bot should remain alive before restart');
+
+  result = runNode(
+    ['agents', 'start', '--target', repoDir, '--review-interval', '30', '--cleanup-interval', '60', '--idle-minutes', '60'],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /Reused healthy bot process\(es\) and started only missing ones\./);
+
+  const secondState = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(secondState.review.pid, firstReviewPid, 'running review bot should be reused');
+  assert.notEqual(secondState.cleanup.pid, firstCleanupPid, 'missing cleanup bot should be restarted');
+  assert.equal(isPidAlive(secondState.review.pid), true, 'reused review bot should stay alive');
+  assert.equal(isPidAlive(secondState.cleanup.pid), true, 'new cleanup bot should be alive');
+
+  result = runNode(['agents', 'stop', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(waitForPidExit(secondState.review.pid), true, 'review bot pid should exit after stop');
+  assert.equal(waitForPidExit(secondState.cleanup.pid), true, 'cleanup bot pid should exit after stop');
+});
+
+test('agents cleanup bot defaults to a 60-minute idle threshold', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+  const scriptsDir = path.join(repoDir, 'scripts');
+  fs.mkdirSync(scriptsDir, { recursive: true });
+
+  const reviewScriptPath = path.join(scriptsDir, 'review-bot-watch.sh');
+  fs.writeFileSync(
+    reviewScriptPath,
+    '#!/usr/bin/env bash\n' +
+      'set -euo pipefail\n' +
+      'while true; do sleep 60; done\n',
+    'utf8',
+  );
+  fs.chmodSync(reviewScriptPath, 0o755);
+
+  const pruneScriptPath = path.join(scriptsDir, 'agent-worktree-prune.sh');
+  fs.writeFileSync(
+    pruneScriptPath,
+    '#!/usr/bin/env bash\n' +
+      'set -euo pipefail\n' +
+      'exit 0\n',
+    'utf8',
+  );
+  fs.chmodSync(pruneScriptPath, 0o755);
+
+  let result = runNode(['agents', 'start', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const statePath = path.join(repoDir, '.omx', 'state', 'agents-bots.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  assert.equal(state.cleanup.idleMinutes, 60);
+  assert.equal(isPidAlive(state.review.pid), true, 'review bot pid should be alive after start');
+  assert.equal(isPidAlive(state.cleanup.pid), true, 'cleanup bot pid should be alive after start');
+
+  result = runNode(['agents', 'stop', '--target', repoDir], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(waitForPidExit(state.review.pid), true, 'review bot pid should exit after stop');
+  assert.equal(waitForPidExit(state.cleanup.pid), true, 'cleanup bot pid should exit after stop');
+});
+
 test('finish command auto-commits dirty agent worktree and runs PR finish flow for the branch', () => {
   const repoDir = initRepoOnBranch('main');
   seedCommit(repoDir);
@@ -1613,10 +1720,11 @@ test('pre-commit blocks non-codex VS Code commits on custom protected branches b
     ALLOW_COMMIT_ON_PROTECTED_BRANCH: '0',
     VSCODE_GIT_IPC_HANDLE: '1',
   });
-  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
 });
 
-test('pre-commit allows non-codex protected branch commits from VS Code Source Control env by default', () => {
+test('pre-commit blocks non-codex protected branch commits from VS Code Source Control env by default', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
   attachOriginRemote(repoDir);
@@ -1635,10 +1743,11 @@ test('pre-commit allows non-codex protected branch commits from VS Code Source C
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
 });
 
-test('pre-commit allows non-codex VS Code commits on protected local-only branches', () => {
+test('pre-commit blocks non-codex VS Code commits on protected local-only branches by default', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
 
@@ -1656,7 +1765,8 @@ test('pre-commit allows non-codex VS Code commits on protected local-only branch
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
 });
 
 test('pre-commit blocks codex commits on protected local-only branches even from VS Code Source Control env', () => {
@@ -1702,7 +1812,8 @@ test('pre-push blocks non-codex protected branch pushes from VS Code Source Cont
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
+  assert.match(hookResult.stderr, /\[agent-branch-guard\] Push to protected branch blocked\./);
 });
 
 test('pre-commit blocks non-codex protected branch commits from VS Code Source Control env when explicitly disabled', () => {
@@ -1772,7 +1883,7 @@ test('pre-push allows non-codex protected branch pushes from VS Code Source Cont
 
   let configResult = runCmd(
     'git',
-    ['config', 'multiagent.allowVscodeProtectedBranchWrites', 'false'],
+    ['config', 'multiagent.allowVscodeProtectedBranchWrites', 'true'],
     repoDir,
   );
   assert.equal(configResult.status, 0, configResult.stderr || configResult.stdout);
@@ -1790,8 +1901,7 @@ test('pre-push allows non-codex protected branch pushes from VS Code Source Cont
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
-  assert.match(hookResult.stderr, /\[agent-branch-guard\] Push to protected branch blocked\./);
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
 });
 
 test('pre-push blocks codex protected branch pushes even from VS Code Source Control env', () => {
@@ -1817,6 +1927,56 @@ test('pre-push blocks codex protected branch pushes even from VS Code Source Con
   );
   assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
   assert.match(hookResult.stderr, /\[guardex-preedit-guard\] Codex push detected toward protected branch\./);
+});
+
+test('post-merge auto-runs cleanup on base branch and skips non-base branches', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+
+  const setupResult = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+
+  const markerPath = path.join(repoDir, '.post-merge-cleanup-args');
+  fs.writeFileSync(
+    path.join(repoDir, 'bin', 'multiagent-safety.js'),
+    '#!/usr/bin/env node\n' +
+      "const fs = require('node:fs');\n" +
+      "const marker = process.env.MUSAFETY_POST_MERGE_MARKER;\n" +
+      "if (marker) fs.appendFileSync(marker, process.argv.slice(2).join(' ') + '\\n', 'utf8');\n",
+    'utf8',
+  );
+
+  let result = runCmd('bash', ['.githooks/post-merge', '0'], repoDir, {
+    MUSAFETY_POST_MERGE_MARKER: markerPath,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  let invocations = fs
+    .readFileSync(markerPath, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  assert.equal(invocations.length, 1);
+  assert.match(invocations[0], /^cleanup /);
+  assert.match(invocations[0], new RegExp(`--target ${escapeRegexLiteral(repoDir)}`));
+  assert.match(invocations[0], /--base dev/);
+  assert.match(invocations[0], /--include-pr-merged/);
+  assert.match(invocations[0], /--keep-clean-worktrees/);
+
+  result = runCmd('git', ['checkout', '-b', 'feature/post-merge-skip'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('bash', ['.githooks/post-merge', '0'], repoDir, {
+    MUSAFETY_POST_MERGE_MARKER: markerPath,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  invocations = fs
+    .readFileSync(markerPath, 'utf8')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  assert.equal(invocations.length, 1, 'post-merge should skip cleanup on non-base branch');
 });
 
 test('codex-agent launches codex inside a fresh sandbox worktree and keeps branch/worktree by default', () => {
@@ -3277,7 +3437,53 @@ test('cleanup command keeps unmerged agent branch refs but removes clean agent w
   assert.equal(localBranch.status, 0, 'cleanup should keep unmerged local branch');
 });
 
-test('cleanup command watch mode defaults to 10-minute idle threshold and supports one-cycle execution', () => {
+test('cleanup command can remove squash-merged agent branches via merged PR detection', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const worktreePath = path.join(repoDir, '.omx', 'agent-worktrees', 'agent__cleanup-pr-merged');
+  result = runCmd('git', ['worktree', 'add', '-b', 'agent/test-cleanup-pr-merged', worktreePath, 'dev'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  fs.writeFileSync(path.join(worktreePath, 'feature.txt'), 'feature branch commit\n', 'utf8');
+  result = runCmd('git', ['-C', worktreePath, 'add', 'feature.txt'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['-C', worktreePath, 'commit', '-m', 'feature commit'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const { fakePath: fakeGhPath } = createFakeGhScript(
+    'if [[ "$1" == "pr" && "$2" == "list" ]]; then\n' +
+      '  printf \'%s\\n\' "agent/test-cleanup-pr-merged"\n' +
+      '  exit 0\n' +
+      'fi\n' +
+      'exit 1',
+  );
+
+  result = runNodeWithEnv(
+    [
+      'cleanup',
+      '--target',
+      repoDir,
+      '--branch',
+      'agent/test-cleanup-pr-merged',
+      '--keep-remote',
+      '--keep-clean-worktrees',
+      '--include-pr-merged',
+    ],
+    repoDir,
+    { MUSAFETY_GH_BIN: fakeGhPath },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const localBranch = runCmd('git', ['show-ref', '--verify', '--quiet', 'refs/heads/agent/test-cleanup-pr-merged'], repoDir);
+  assert.notEqual(localBranch.status, 0, 'cleanup should remove merged PR local branch');
+  assert.equal(fs.existsSync(worktreePath), false, 'cleanup should remove merged PR worktree');
+});
+
+test('cleanup command watch mode defaults to 60-minute idle threshold and supports one-cycle execution', () => {
   const repoDir = initRepo();
   const scriptsDir = path.join(repoDir, 'scripts');
   fs.mkdirSync(scriptsDir, { recursive: true });
@@ -3296,7 +3502,7 @@ test('cleanup command watch mode defaults to 10-minute idle threshold and suppor
   const result = runNode(['cleanup', '--target', repoDir, '--watch', '--once', '--interval', '15'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const passedArgs = fs.readFileSync(markerArgs, 'utf8').trim();
-  assert.match(passedArgs, /--idle-minutes 10/);
+  assert.match(passedArgs, /--idle-minutes 60/);
   assert.match(passedArgs, /--only-dirty-worktrees/);
 });
 
