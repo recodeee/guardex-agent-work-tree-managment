@@ -9,6 +9,12 @@ if [[ -z "$branch" ]]; then
   exit 0
 fi
 
+git_dir="$(git rev-parse --git-dir 2>/dev/null || true)"
+is_linked_worktree=0
+if [[ -n "$git_dir" && "$git_dir" == *"/worktrees/"* ]]; then
+  is_linked_worktree=1
+fi
+
 if [[ "${ALLOW_COMMIT_ON_PROTECTED_BRANCH:-0}" == "1" ]]; then
   exit 0
 fi
@@ -24,7 +30,7 @@ if [[ -n "${CODEX_THREAD_ID:-}" || -n "${OMX_SESSION_ID:-}" || "${CODEX_CI:-0}" 
 fi
 
 is_vscode_git_context=0
-if [[ -n "${VSCODE_GIT_IPC_HANDLE:-}" || -n "${VSCODE_GIT_ASKPASS_NODE:-}" || -n "${VSCODE_IPC_HOOK_CLI:-}" ]]; then
+if [[ -n "${VSCODE_GIT_IPC_HANDLE:-}" || -n "${VSCODE_GIT_ASKPASS_NODE:-}" || -n "${VSCODE_IPC_HOOK_CLI:-}" || "${TERM_PROGRAM:-}" == "vscode" ]]; then
   is_vscode_git_context=1
 fi
 
@@ -67,6 +73,163 @@ case "$codex_require_agent_branch" in
   0|false|no|off) should_require_codex_agent_branch=0 ;;
   *) should_require_codex_agent_branch=1 ;;
 esac
+
+sanitize_slug() {
+  local raw="$1"
+  local fallback="${2:-task}"
+  local slug
+  slug="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
+  if [[ -z "$slug" ]]; then
+    slug="$fallback"
+  fi
+  printf '%s' "$slug"
+}
+
+resolve_agent_branch_base() {
+  local branch_name="$1"
+  git config --get "branch.${branch_name}.musafetyBase" || true
+}
+
+is_helper_agent_branch() {
+  local branch_name="$1"
+  local base_branch=""
+  base_branch="$(resolve_agent_branch_base "$branch_name")"
+  [[ "$base_branch" == agent/* ]]
+}
+
+ensure_agent_branch_openspec_workspace() {
+  local branch_name="$1"
+  local change_slug change_dir specs_dir capability_slug branch_base
+  local missing_workspace=0
+  local openspec_script="scripts/openspec/init-change-workspace.sh"
+
+  branch_base="$(git config --get "branch.${branch_name}.musafetyBase" || true)"
+  if [[ "$branch_base" == agent/* ]]; then
+    echo "[agent-openspec-guard] Skipping OpenSpec change workspace bootstrap for helper branch '${branch_name}' (base '${branch_base}')."
+    return 0
+  fi
+
+  change_slug="$(sanitize_slug "${branch_name//\//-}" "change")"
+  change_dir="openspec/changes/${change_slug}"
+  specs_dir="${change_dir}/specs"
+
+  if [[ ! -f "${change_dir}/.openspec.yaml" || ! -f "${change_dir}/proposal.md" || ! -f "${change_dir}/tasks.md" ]]; then
+    missing_workspace=1
+  elif [[ ! -d "$specs_dir" ]] || ! find "$specs_dir" -mindepth 2 -maxdepth 2 -type f -name spec.md | grep -q .; then
+    missing_workspace=1
+  fi
+
+  if [[ "$missing_workspace" -ne 1 ]]; then
+    return 0
+  fi
+
+  if [[ ! -f "$openspec_script" ]]; then
+    cat >&2 <<MSG
+[agent-openspec-guard] Missing OpenSpec change workspace for '${branch_name}'.
+Expected path:
+  ${change_dir}
+Cannot auto-initialize because '${openspec_script}' is missing.
+Run:
+  gx setup --target "$(git rev-parse --show-toplevel)"
+  bash scripts/openspec/init-change-workspace.sh "${change_slug}" "<capability-slug>"
+MSG
+    exit 1
+  fi
+
+  if [[ ! -x "$openspec_script" ]]; then
+    chmod +x "$openspec_script" 2>/dev/null || true
+  fi
+
+  capability_slug="$(sanitize_slug "${branch_name##*/}" "general-behavior")"
+  init_output=""
+  if ! init_output="$(bash "$openspec_script" "$change_slug" "$capability_slug" 2>&1)"; then
+    printf '%s\n' "$init_output" >&2
+    cat >&2 <<MSG
+[agent-openspec-guard] OpenSpec auto-init failed for '${branch_name}'.
+Run manually:
+  bash scripts/openspec/init-change-workspace.sh "${change_slug}" "${capability_slug}"
+MSG
+    exit 1
+  fi
+
+  if [[ -n "$init_output" ]]; then
+    printf '%s\n' "$init_output"
+  fi
+
+  git add "$change_dir"
+
+  if [[ -x scripts/agent-file-locks.py ]]; then
+    staged_openspec="$(git diff --cached --name-only -- "$change_dir" | sed '/^$/d' || true)"
+    if [[ -n "$staged_openspec" ]]; then
+      mapfile -t openspec_files < <(printf '%s\n' "$staged_openspec")
+      python3 scripts/agent-file-locks.py claim --branch "$branch_name" "${openspec_files[@]}" >/dev/null 2>&1 || true
+    fi
+  fi
+
+  echo "[agent-openspec-guard] Bootstrapped OpenSpec change workspace: ${change_dir}"
+}
+
+should_auto_reroute_protected_branch() {
+  local raw="${MUSAFETY_AUTO_REROUTE_PROTECTED_BRANCH:-$(git config --get multiagent.autoRerouteProtectedBranch || true)}"
+  local lowered=""
+  if [[ -z "$raw" ]]; then
+    raw="true"
+  fi
+  lowered="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
+  case "$lowered" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+auto_reroute_protected_branch_commit() {
+  local branch_name="$1"
+  local starter_script="scripts/agent-branch-start.sh"
+  local task_name="${MUSAFETY_AUTO_REROUTE_TASK_NAME:-protected-branch-commit-reroute}"
+  local agent_name="${MUSAFETY_AUTO_REROUTE_AGENT_NAME:-auto-reroute}"
+  local changed_paths=""
+  local start_output=""
+  local start_status=0
+  local new_branch=""
+  local worktree_path=""
+
+  changed_paths="$({
+    git diff --name-only
+    git diff --cached --name-only
+    git ls-files --others --exclude-standard
+  } | sed '/^$/d' | sort -u)"
+
+  if [[ -z "$changed_paths" ]]; then
+    return 1
+  fi
+
+  if [[ ! -x "$starter_script" ]]; then
+    return 1
+  fi
+
+  set +e
+  start_output="$(bash "$starter_script" "$task_name" "$agent_name" "$branch_name" 2>&1)"
+  start_status=$?
+  set -e
+
+  if [[ "$start_status" -ne 0 ]]; then
+    printf '%s\n' "$start_output" >&2
+    return 1
+  fi
+
+  new_branch="$(printf '%s\n' "$start_output" | sed -n 's/^\[agent-branch-start\] Created branch: //p' | tail -n 1)"
+  worktree_path="$(printf '%s\n' "$start_output" | sed -n 's/^\[agent-branch-start\] Worktree: //p' | tail -n 1)"
+
+  printf '%s\n' "$start_output" >&2
+  cat >&2 <<MSG
+[agent-branch-guard] Protected-branch commit rerouted automatically.
+Changes from '${branch_name}' were moved to:
+  branch: ${new_branch:-<see output>}
+  worktree: ${worktree_path:-<see output>}
+Continue work and commit from that agent worktree.
+MSG
+  return 0
+}
 
 is_codex_managed_only_commit_on_protected=0
 if [[ "$is_codex_session" == "1" && "$is_protected_branch" == "1" ]]; then
@@ -123,15 +286,30 @@ MSG
   fi
 fi
 
+if [[ "$is_codex_session" == "1" && "$branch" == agent/* ]]; then
+  if [[ "$is_linked_worktree" != "1" && "${MUSAFETY_ALLOW_CODEX_ON_PRIMARY_WORKTREE:-0}" != "1" ]]; then
+    cat >&2 <<'MSG'
+[codex-worktree-guard] Codex agent commits are blocked from the primary checkout.
+Use a linked agent worktree for agent/* branches:
+  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+Then commit from the printed worktree path.
+
+Temporary bypass (not recommended):
+  MUSAFETY_ALLOW_CODEX_ON_PRIMARY_WORKTREE=1 git commit ...
+MSG
+    exit 1
+  fi
+fi
+
 if [[ "$is_protected_branch" == "1" ]]; then
-  if [[ "$is_codex_session" != "1" && "$is_vscode_git_context" == "1" ]]; then
-    if [[ "$allow_vscode_protected_branch_writes" == "1" ]]; then
-      exit 0
-    fi
+  if [[ "$is_codex_session" != "1" && "$is_vscode_git_context" == "1" && "$allow_vscode_protected_branch_writes" == "1" ]]; then
+    exit 0
   fi
 
-  if [[ "$is_unborn_branch" == "1" && "$is_codex_session" != "1" ]]; then
-    exit 0
+  if should_auto_reroute_protected_branch; then
+    if auto_reroute_protected_branch_commit "$branch"; then
+      exit 1
+    fi
   fi
 
   git_dir="$(git rev-parse --git-dir)"
@@ -145,8 +323,10 @@ Use an agent branch first:
   bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
 After finishing work:
   bash scripts/agent-branch-finish.sh
+Auto-reroute can be disabled (not recommended):
+  MUSAFETY_AUTO_REROUTE_PROTECTED_BRANCH=0 git commit ...
 
-Optional repo opt-in for VS Code protected-branch commits:
+Optional repo override for manual VS Code protected-branch commits:
   git config multiagent.allowVscodeProtectedBranchWrites true
 
 Temporary bypass (not recommended):
@@ -156,6 +336,13 @@ MSG
 fi
 
 if [[ "$branch" == agent/* ]]; then
+  if is_helper_agent_branch "$branch"; then
+    helper_base="$(resolve_agent_branch_base "$branch")"
+    echo "[agent-openspec-guard] Skipping OpenSpec change workspace bootstrap for helper branch '${branch}' (base '${helper_base}')."
+  else
+    ensure_agent_branch_openspec_workspace "$branch"
+  fi
+
   if ! python3 scripts/agent-file-locks.py validate --branch "$branch" --staged; then
     cat >&2 <<'MSG'
 [agent-branch-guard] Agent branch commits require file ownership locks.

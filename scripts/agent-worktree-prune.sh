@@ -8,16 +8,11 @@ FORCE_DIRTY=0
 DELETE_BRANCHES=0
 DELETE_REMOTE_BRANCHES=0
 ONLY_DIRTY_WORKTREES=0
-INCLUDE_PR_MERGED=0
 TARGET_BRANCH=""
 IDLE_MINUTES=0
 NOW_EPOCH_RAW="${MUSAFETY_PRUNE_NOW_EPOCH:-}"
 IDLE_SECONDS=0
 NOW_EPOCH=0
-GH_BIN="${MUSAFETY_GH_BIN:-gh}"
-PR_MERGED_LOOKUP_DISABLED=0
-PR_MERGED_LOOKUP_LOADED=0
-declare -A MERGED_PR_BRANCHES=()
 
 if [[ -n "$BASE_BRANCH" ]]; then
   BASE_BRANCH_EXPLICIT=1
@@ -50,10 +45,6 @@ while [[ $# -gt 0 ]]; do
       ONLY_DIRTY_WORKTREES=1
       shift
       ;;
-    --include-pr-merged)
-      INCLUDE_PR_MERGED=1
-      shift
-      ;;
     --branch)
       TARGET_BRANCH="${2:-}"
       shift 2
@@ -64,7 +55,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     *)
       echo "[agent-worktree-prune] Unknown argument: $1" >&2
-      echo "Usage: $0 [--base <branch>] [--dry-run] [--force-dirty] [--delete-branches] [--delete-remote-branches] [--only-dirty-worktrees] [--include-pr-merged] [--branch <agent/...>] [--idle-minutes <minutes>]" >&2
+      echo "Usage: $0 [--base <branch>] [--dry-run] [--force-dirty] [--delete-branches] [--delete-remote-branches] [--only-dirty-worktrees] [--branch <agent/...|__agent_integrate_*|__source-probe-*>]" >&2
       exit 1
       ;;
   esac
@@ -75,7 +66,15 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
-repo_root="$(git rev-parse --show-toplevel)"
+current_worktree_root="$(git rev-parse --show-toplevel)"
+common_git_dir_raw="$(git -C "$current_worktree_root" rev-parse --git-common-dir)"
+if [[ "$common_git_dir_raw" == /* ]]; then
+  repo_common_dir="$common_git_dir_raw"
+else
+  repo_common_dir="${current_worktree_root}/${common_git_dir_raw}"
+fi
+repo_common_dir="$(cd "$repo_common_dir" && pwd -P)"
+repo_root="$(cd "$repo_common_dir/.." && pwd -P)"
 current_pwd="$(pwd -P)"
 worktree_root="${repo_root}/.omx/agent-worktrees"
 repo_common_dir="$(
@@ -110,42 +109,19 @@ resolve_base_branch() {
   printf '%s' ""
 }
 
-load_merged_pr_branches() {
-  if [[ "$INCLUDE_PR_MERGED" -ne 1 ]]; then
-    return 1
-  fi
-  if [[ "$PR_MERGED_LOOKUP_DISABLED" -eq 1 ]]; then
-    return 1
-  fi
-  if [[ "$PR_MERGED_LOOKUP_LOADED" -eq 1 ]]; then
-    return 0
-  fi
-  if ! command -v "$GH_BIN" >/dev/null 2>&1; then
-    PR_MERGED_LOOKUP_DISABLED=1
-    return 1
-  fi
-
-  local merged_branches=""
-  merged_branches="$(
-    "$GH_BIN" pr list --state merged --base "$BASE_BRANCH" --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
-  )"
-  if [[ -n "$merged_branches" ]]; then
-    while IFS= read -r merged_branch; do
-      [[ -z "$merged_branch" ]] && continue
-      MERGED_PR_BRANCHES["$merged_branch"]=1
-    done <<< "$merged_branches"
-  fi
-  PR_MERGED_LOOKUP_LOADED=1
-  return 0
+is_agent_branch() {
+  local branch="$1"
+  [[ "$branch" == agent/* ]]
 }
 
-branch_has_merged_pr() {
+is_temporary_branch() {
   local branch="$1"
-  if [[ "$INCLUDE_PR_MERGED" -ne 1 ]]; then
-    return 1
-  fi
-  load_merged_pr_branches || return 1
-  [[ -n "${MERGED_PR_BRANCHES[$branch]:-}" ]]
+  [[ "$branch" == __agent_integrate_* || "$branch" == __source-probe-* ]]
+}
+
+is_supported_target_branch() {
+  local branch="$1"
+  is_agent_branch "$branch" || is_temporary_branch "$branch"
 }
 
 if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -z "$BASE_BRANCH" ]]; then
@@ -153,8 +129,8 @@ if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -z "$BASE_BRANCH" ]]; then
   exit 1
 fi
 
-if [[ -n "$TARGET_BRANCH" && "$TARGET_BRANCH" != agent/* ]]; then
-  echo "[agent-worktree-prune] --branch must reference an agent/* branch: ${TARGET_BRANCH}" >&2
+if [[ -n "$TARGET_BRANCH" ]] && ! is_supported_target_branch "$TARGET_BRANCH"; then
+  echo "[agent-worktree-prune] --branch must reference agent/*, __agent_integrate_*, or __source-probe-*: ${TARGET_BRANCH}" >&2
   exit 1
 fi
 
@@ -199,7 +175,10 @@ run_cmd() {
 
 branch_has_worktree() {
   local branch="$1"
-  git -C "$repo_root" worktree list --porcelain | grep -q "^branch refs/heads/${branch}$"
+  git -C "$repo_root" worktree list --porcelain | awk -v target="refs/heads/${branch}" '
+    $1 == "branch" && $2 == target { found = 1; exit }
+    END { exit(found ? 0 : 1) }
+  '
 }
 
 is_clean_worktree() {
@@ -207,6 +186,163 @@ is_clean_worktree() {
   git -C "$wt" diff --quiet -- . ":(exclude).omx/state/agent-file-locks.json" \
     && git -C "$wt" diff --cached --quiet -- . ":(exclude).omx/state/agent-file-locks.json" \
     && [[ -z "$(git -C "$wt" ls-files --others --exclude-standard)" ]]
+}
+
+has_unmerged_conflicts() {
+  local wt="$1"
+  [[ -n "$(git -C "$wt" diff --name-only --diff-filter=U 2>/dev/null || true)" ]]
+}
+
+filtered_status_output() {
+  local wt="$1"
+  git -C "$wt" status --porcelain --untracked-files=normal -- \
+    . \
+    ":(exclude).omx/state/agent-file-locks.json" \
+    ":(exclude).dev-ports.json" \
+    ":(exclude)apps/logs/*.log"
+}
+
+resolve_worktree_git_dir() {
+  local wt="$1"
+  local git_dir=""
+  git_dir="$(git -C "$wt" rev-parse --git-dir 2>/dev/null || true)"
+  if [[ -z "$git_dir" ]]; then
+    return 1
+  fi
+  if [[ "$git_dir" == /* ]]; then
+    git_dir="$(cd "$git_dir" 2>/dev/null && pwd -P || true)"
+  else
+    git_dir="$(cd "$wt/$git_dir" 2>/dev/null && pwd -P || true)"
+  fi
+  if [[ -z "$git_dir" ]]; then
+    return 1
+  fi
+  printf '%s' "$git_dir"
+}
+
+bootstrap_manifest_path_for_worktree() {
+  local wt="$1"
+  local git_dir=""
+  git_dir="$(resolve_worktree_git_dir "$wt" || true)"
+  if [[ -z "$git_dir" ]]; then
+    return 1
+  fi
+  printf '%s/musafety-bootstrap-manifest.json' "$git_dir"
+}
+
+worktree_matches_bootstrap_manifest() {
+  local wt="$1"
+  local manifest_path=""
+  local status_output=""
+
+  manifest_path="$(bootstrap_manifest_path_for_worktree "$wt" || true)"
+  if [[ -z "$manifest_path" || ! -f "$manifest_path" ]]; then
+    return 1
+  fi
+
+  status_output="$(filtered_status_output "$wt")"
+  if [[ -z "$status_output" ]]; then
+    return 1
+  fi
+
+  STATUS_OUTPUT="$status_output" python3 - "$wt" "$manifest_path" <<'PY'
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def parse_status_paths(raw: str) -> list[str]:
+    paths: list[str] = []
+    for line in raw.splitlines():
+        if len(line) < 4:
+            continue
+        path_part = line[3:]
+        if " -> " in path_part:
+            path_part = path_part.split(" -> ", 1)[1]
+        path_part = path_part.strip()
+        if path_part:
+            paths.append(path_part)
+    return paths
+
+
+def sha256_for_path(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+if len(sys.argv) != 3:
+    sys.exit(1)
+
+worktree_root = Path(sys.argv[1])
+manifest_path = Path(sys.argv[2])
+status_raw = os.environ.get("STATUS_OUTPUT", "")
+status_paths = sorted(set(parse_status_paths(status_raw)))
+if not status_paths:
+    sys.exit(1)
+
+try:
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+except Exception:
+    sys.exit(1)
+
+entries = payload.get("files")
+if not isinstance(entries, list):
+    sys.exit(1)
+
+manifest_by_path: dict[str, str | None] = {}
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
+    path_value = entry.get("path")
+    if not isinstance(path_value, str) or not path_value:
+        continue
+    sha_value = entry.get("sha256")
+    if sha_value is not None and not isinstance(sha_value, str):
+        continue
+    manifest_by_path[path_value] = sha_value
+
+if not manifest_by_path:
+    sys.exit(1)
+
+for rel_path in status_paths:
+    if rel_path not in manifest_by_path:
+        sys.exit(1)
+    file_path = worktree_root / rel_path
+    current_sha = sha256_for_path(file_path)
+    if current_sha != manifest_by_path.get(rel_path):
+        sys.exit(1)
+
+sys.exit(0)
+PY
+}
+
+sanitize_branch_component() {
+  local raw="$1"
+  raw="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+  if [[ -z "$raw" ]]; then
+    raw="sandbox"
+  fi
+  printf '%s' "$raw"
+}
+
+resolve_unique_recovery_branch_name() {
+  local seed="$1"
+  local candidate="$seed"
+  local suffix=2
+  while git -C "$repo_root" show-ref --verify --quiet "refs/heads/${candidate}"; do
+    candidate="${seed}-${suffix}"
+    suffix=$((suffix + 1))
+  done
+  printf '%s' "$candidate"
 }
 
 resolve_worktree_common_dir() {
@@ -239,68 +375,45 @@ select_unique_worktree_path() {
   printf '%s' "$candidate"
 }
 
-read_branch_activity_epoch() {
-  local branch="$1"
-  local wt="${2:-}"
-  local activity_epoch=""
-
-  activity_epoch="$(
-    git -C "$repo_root" reflog show --format='%ct' -n 1 "refs/heads/${branch}" 2>/dev/null \
-      | head -n 1 \
-      | tr -d '[:space:]'
-  )"
-  if [[ -z "$activity_epoch" ]]; then
-    activity_epoch="$(
-      git -C "$repo_root" log -1 --format='%ct' "$branch" 2>/dev/null \
-        | head -n 1 \
-        | tr -d '[:space:]'
-    )"
-  fi
-
-  if [[ -n "$wt" && -d "$wt" ]]; then
-    local lock_file="${wt}/.omx/state/agent-file-locks.json"
-    if [[ -f "$lock_file" ]]; then
-      local lock_mtime=""
-      lock_mtime="$(stat -c %Y "$lock_file" 2>/dev/null || stat -f %m "$lock_file" 2>/dev/null || true)"
-      if [[ "$lock_mtime" =~ ^[0-9]+$ ]]; then
-        if [[ -z "$activity_epoch" || "$lock_mtime" -gt "$activity_epoch" ]]; then
-          activity_epoch="$lock_mtime"
-        fi
-      fi
-    fi
-  fi
-
-  printf '%s' "$activity_epoch"
-}
-
 skipped_recent=0
 
 branch_idle_gate() {
   local branch="$1"
   local wt="$2"
   local reason="$3"
+  local subject=""
+  local commit_epoch=""
+  local age=0
+  local wait_remaining=0
+
   if [[ "$IDLE_SECONDS" -le 0 ]]; then
     return 0
   fi
-  if [[ -z "$branch" ]]; then
+
+  if [[ -n "$branch" ]] && git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch}"; then
+    commit_epoch="$(git -C "$repo_root" log -1 --format=%ct "$branch" 2>/dev/null || true)"
+    subject="$branch"
+  elif [[ -n "$wt" ]]; then
+    commit_epoch="$(git -C "$wt" log -1 --format=%ct 2>/dev/null || true)"
+    subject="$wt"
+  fi
+
+  if [[ -z "$commit_epoch" || ! "$commit_epoch" =~ ^[0-9]+$ ]]; then
     return 0
   fi
 
-  local last_activity_epoch=""
-  last_activity_epoch="$(read_branch_activity_epoch "$branch" "$wt")"
-  if [[ ! "$last_activity_epoch" =~ ^[0-9]+$ ]]; then
-    return 0
+  age=$((NOW_EPOCH - commit_epoch))
+  if (( age < 0 )); then
+    age=0
   fi
 
-  local idle_age=$((NOW_EPOCH - last_activity_epoch))
-  if [[ "$idle_age" -lt 0 ]]; then
-    idle_age=0
-  fi
-  if [[ "$idle_age" -lt "$IDLE_SECONDS" ]]; then
+  if (( age < IDLE_SECONDS )); then
+    wait_remaining=$((IDLE_SECONDS - age))
     skipped_recent=$((skipped_recent + 1))
-    echo "[agent-worktree-prune] Skipping recent branch (${reason}): ${branch} (idle=${idle_age}s < ${IDLE_SECONDS}s)"
+    echo "[agent-worktree-prune] Skipping recent ${reason}: ${subject} (age=${age}s, threshold=${IDLE_SECONDS}s, wait~${wait_remaining}s)"
     return 1
   fi
+
   return 0
 }
 
@@ -363,6 +476,10 @@ removed_worktrees=0
 removed_branches=0
 skipped_active=0
 skipped_dirty=0
+repaired_detached_conflicts=0
+failed_ops=0
+
+relocate_foreign_worktree_entries
 
 relocate_foreign_worktree_entries
 
@@ -389,24 +506,26 @@ process_entry() {
   fi
 
   local remove_reason=""
-  local branch_delete_mode="safe"
+  local wt_name
+  wt_name="$(basename "$wt")"
 
-  if [[ -z "$branch_ref" ]]; then
+  if [[ "$wt_name" == __integrate-* || "$wt_name" == __source-probe-* ]]; then
+    remove_reason="temporary-worktree"
+  elif [[ -z "$branch_ref" ]]; then
     remove_reason="detached-worktree"
   elif ! git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch}"; then
     remove_reason="missing-branch"
-  elif [[ "$branch" == agent/* ]]; then
+  elif is_agent_branch "$branch"; then
     if git -C "$repo_root" merge-base --is-ancestor "$branch" "$BASE_BRANCH"; then
       if [[ "$DELETE_BRANCHES" -eq 1 ]]; then
         remove_reason="merged-agent-branch"
+      else
+        remove_reason="merged-agent-worktree"
       fi
-    elif [[ "$DELETE_BRANCHES" -eq 1 ]] && branch_has_merged_pr "$branch"; then
-      remove_reason="merged-agent-pr"
-      branch_delete_mode="force"
     elif [[ "$ONLY_DIRTY_WORKTREES" -eq 1 ]] && is_clean_worktree "$wt"; then
       remove_reason="clean-agent-worktree"
     fi
-  elif [[ "$branch" == __agent_integrate_* || "$branch" == __source-probe-* ]]; then
+  elif is_temporary_branch "$branch"; then
     remove_reason="temporary-worktree"
   fi
 
@@ -418,39 +537,73 @@ process_entry() {
     return
   fi
 
-  if [[ "$FORCE_DIRTY" -ne 1 ]] && ! is_clean_worktree "$wt"; then
-    skipped_dirty=$((skipped_dirty + 1))
-    echo "[agent-worktree-prune] Skipping dirty worktree (${remove_reason}): ${wt}"
+  if [[ "$FORCE_DIRTY" -ne 1 ]] \
+    && [[ "$remove_reason" == "detached-worktree" ]] \
+    && has_unmerged_conflicts "$wt"; then
+    local wt_component
+    local base_component
+    local recovery_seed
+    local recovery_branch
+
+    wt_component="$(sanitize_branch_component "$wt_name")"
+    base_component="$(sanitize_branch_component "$BASE_BRANCH")"
+    recovery_seed="agent/recover/${base_component}-${wt_component}-$(date +%Y%m%d-%H%M%S)"
+    recovery_branch="$(resolve_unique_recovery_branch_name "$recovery_seed")"
+
+    if [[ "$DRY_RUN" -eq 1 ]]; then
+      echo "[agent-worktree-prune] [dry-run] Would recover detached conflicted worktree: ${wt} -> ${recovery_branch}"
+      repaired_detached_conflicts=$((repaired_detached_conflicts + 1))
+      return
+    fi
+
+    if git -C "$wt" checkout -b "$recovery_branch" >/dev/null 2>&1; then
+      repaired_detached_conflicts=$((repaired_detached_conflicts + 1))
+      echo "[agent-worktree-prune] Recovered detached conflicted worktree: ${wt} -> ${recovery_branch}"
+      return
+    fi
+
+    failed_ops=$((failed_ops + 1))
+    echo "[agent-worktree-prune] Failed to recover detached conflicted worktree: ${wt}" >&2
     return
   fi
 
+  if [[ "$FORCE_DIRTY" -ne 1 ]] && ! is_clean_worktree "$wt"; then
+    if [[ "$remove_reason" == "merged-agent-branch" || "$remove_reason" == "merged-agent-worktree" ]] \
+      && worktree_matches_bootstrap_manifest "$wt"; then
+      echo "[agent-worktree-prune] Treating bootstrap-only sandbox as safe to remove (${remove_reason}): ${wt}"
+    else
+      skipped_dirty=$((skipped_dirty + 1))
+      echo "[agent-worktree-prune] Skipping dirty worktree (${remove_reason}): ${wt}"
+      return
+    fi
+  fi
+
   echo "[agent-worktree-prune] Removing worktree (${remove_reason}): ${wt}"
-  run_cmd git -C "$repo_root" worktree remove "$wt" --force
-  removed_worktrees=$((removed_worktrees + 1))
+  if run_cmd git -C "$repo_root" worktree remove "$wt" --force; then
+    removed_worktrees=$((removed_worktrees + 1))
+  else
+    failed_ops=$((failed_ops + 1))
+    echo "[agent-worktree-prune] Failed to remove worktree (${remove_reason}): ${wt}" >&2
+    return
+  fi
 
   if [[ -z "$branch" ]]; then
     return
   fi
 
   if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch}" && ! branch_has_worktree "$branch"; then
-    if [[ "$branch" == agent/* && "$DELETE_BRANCHES" -eq 1 ]]; then
-      local delete_flag="-d"
-      local deleted_label="merged"
-      if [[ "$branch_delete_mode" == "force" ]]; then
-        delete_flag="-D"
-        deleted_label="merged PR"
-      fi
-      if run_cmd git -C "$repo_root" branch "$delete_flag" "$branch" >/dev/null 2>&1; then
+    if is_agent_branch "$branch" && [[ "$DELETE_BRANCHES" -eq 1 ]]; then
+      if run_cmd git -C "$repo_root" branch -d "$branch" >/dev/null 2>&1; then
         removed_branches=$((removed_branches + 1))
-        echo "[agent-worktree-prune] Deleted ${deleted_label} branch: ${branch}"
+        echo "[agent-worktree-prune] Deleted merged branch: ${branch}"
         if [[ "$DELETE_REMOTE_BRANCHES" -eq 1 ]]; then
           if git -C "$repo_root" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             run_cmd git -C "$repo_root" push origin --delete "$branch" >/dev/null 2>&1 || true
-            echo "[agent-worktree-prune] Deleted ${deleted_label} remote branch: ${branch}"
+            echo "[agent-worktree-prune] Deleted merged remote branch: ${branch}"
           fi
         fi
       fi
-    elif [[ "$branch" == __agent_integrate_* || "$branch" == __source-probe-* ]]; then
+    elif is_temporary_branch "$branch"; then
       run_cmd git -C "$repo_root" branch -D "$branch" >/dev/null 2>&1 || true
       removed_branches=$((removed_branches + 1))
       echo "[agent-worktree-prune] Deleted temporary branch: ${branch}"
@@ -490,40 +643,81 @@ if [[ "$DELETE_BRANCHES" -eq 1 ]]; then
     if branch_has_worktree "$branch"; then
       continue
     fi
+    if is_temporary_branch "$branch"; then
+      if ! branch_idle_gate "$branch" "" "stale-temporary-branch"; then
+        continue
+      fi
+      if run_cmd git -C "$repo_root" branch -D "$branch" >/dev/null 2>&1; then
+        removed_branches=$((removed_branches + 1))
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+          echo "[agent-worktree-prune] Would delete stale temporary branch: ${branch}"
+        else
+          echo "[agent-worktree-prune] Deleted stale temporary branch: ${branch}"
+        fi
+      fi
+      continue
+    fi
+    if ! is_agent_branch "$branch"; then
+      continue
+    fi
     if ! branch_idle_gate "$branch" "" "stale-merged-branch"; then
       continue
     fi
-    local merged_by_ancestor=0
-    local merged_by_pr=0
     if git -C "$repo_root" merge-base --is-ancestor "$branch" "$BASE_BRANCH"; then
-      merged_by_ancestor=1
-    elif branch_has_merged_pr "$branch"; then
-      merged_by_pr=1
-    fi
-    if [[ "$merged_by_ancestor" -eq 1 || "$merged_by_pr" -eq 1 ]]; then
-      local delete_flag="-d"
-      local deleted_label="merged"
-      if [[ "$merged_by_pr" -eq 1 && "$merged_by_ancestor" -eq 0 ]]; then
-        delete_flag="-D"
-        deleted_label="merged PR"
-      fi
-      if run_cmd git -C "$repo_root" branch "$delete_flag" "$branch" >/dev/null 2>&1; then
+      if run_cmd git -C "$repo_root" branch -d "$branch" >/dev/null 2>&1; then
         removed_branches=$((removed_branches + 1))
-        echo "[agent-worktree-prune] Deleted stale ${deleted_label} branch: ${branch}"
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+          echo "[agent-worktree-prune] Would delete stale merged branch: ${branch}"
+        else
+          echo "[agent-worktree-prune] Deleted stale merged branch: ${branch}"
+        fi
         if [[ "$DELETE_REMOTE_BRANCHES" -eq 1 ]]; then
           if git -C "$repo_root" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             run_cmd git -C "$repo_root" push origin --delete "$branch" >/dev/null 2>&1 || true
-            echo "[agent-worktree-prune] Deleted stale ${deleted_label} remote branch: ${branch}"
+            if [[ "$DRY_RUN" -eq 1 ]]; then
+              echo "[agent-worktree-prune] Would delete stale merged remote branch: ${branch}"
+            else
+              echo "[agent-worktree-prune] Deleted stale merged remote branch: ${branch}"
+            fi
           fi
         fi
       fi
     fi
-  done < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads/agent)
+  done < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/heads | awk '/^agent\// || /^__agent_integrate_/ || /^__source-probe-/')
 fi
 
-run_cmd git -C "$repo_root" worktree prune
+if [[ "$DELETE_REMOTE_BRANCHES" -eq 1 ]]; then
+  while IFS= read -r remote_ref; do
+    [[ -z "$remote_ref" ]] && continue
+    local_branch="${remote_ref#origin/}"
+    if [[ -n "$TARGET_BRANCH" && "$local_branch" != "$TARGET_BRANCH" ]]; then
+      continue
+    fi
+    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${local_branch}"; then
+      continue
+    fi
+    if ! is_agent_branch "$local_branch"; then
+      continue
+    fi
+    if git -C "$repo_root" merge-base --is-ancestor "$remote_ref" "$BASE_BRANCH"; then
+      if run_cmd git -C "$repo_root" push origin --delete "$local_branch" >/dev/null 2>&1; then
+        removed_branches=$((removed_branches + 1))
+        if [[ "$DRY_RUN" -eq 1 ]]; then
+          echo "[agent-worktree-prune] Would delete stale merged remote-only branch: ${local_branch}"
+        else
+          echo "[agent-worktree-prune] Deleted stale merged remote-only branch: ${local_branch}"
+        fi
+      fi
+    fi
+  done < <(git -C "$repo_root" for-each-ref --format='%(refname:short)' refs/remotes/origin/agent)
+fi
 
-echo "[agent-worktree-prune] Summary: base=${BASE_BRANCH}, idle_minutes=${IDLE_MINUTES}, removed_worktrees=${removed_worktrees}, removed_branches=${removed_branches}, skipped_active=${skipped_active}, skipped_dirty=${skipped_dirty}, skipped_recent=${skipped_recent}"
+if ! run_cmd git -C "$repo_root" worktree prune; then
+  failed_ops=$((failed_ops + 1))
+  echo "[agent-worktree-prune] Warning: git worktree prune failed." >&2
+fi
+
+echo "[agent-worktree-prune] Summary: base=${BASE_BRANCH}, removed_worktrees=${removed_worktrees}, removed_branches=${removed_branches}, skipped_active=${skipped_active}, skipped_dirty=${skipped_dirty}, repaired_detached_conflicts=${repaired_detached_conflicts}"
 if [[ "$relocated_foreign" -gt 0 || "$skipped_foreign" -gt 0 ]]; then
   echo "[agent-worktree-prune] Foreign routing: relocated=${relocated_foreign}, skipped=${skipped_foreign}"
 fi
@@ -535,4 +729,7 @@ if [[ "$skipped_dirty" -gt 0 ]]; then
 fi
 if [[ "$IDLE_SECONDS" -gt 0 && "$skipped_recent" -gt 0 ]]; then
   echo "[agent-worktree-prune] Tip: recent branches were preserved by --idle-minutes=${IDLE_MINUTES}. Re-run later or lower the threshold." >&2
+fi
+if [[ "$failed_ops" -gt 0 ]]; then
+  echo "[agent-worktree-prune] Tip: some cleanup operations failed and were skipped. Re-run after fixing file-system or permission blockers." >&2
 fi

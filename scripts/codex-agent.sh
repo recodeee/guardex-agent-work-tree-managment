@@ -6,33 +6,9 @@ AGENT_NAME="${MUSAFETY_AGENT_NAME:-agent}"
 BASE_BRANCH="${MUSAFETY_BASE_BRANCH:-}"
 BASE_BRANCH_EXPLICIT=0
 CODEX_BIN="${MUSAFETY_CODEX_BIN:-codex}"
-AUTO_FINISH_RAW="${MUSAFETY_CODEX_AUTO_FINISH:-true}"
-AUTO_REVIEW_ON_CONFLICT_RAW="${MUSAFETY_CODEX_AUTO_REVIEW_ON_CONFLICT:-true}"
-AUTO_CLEANUP_RAW="${MUSAFETY_CODEX_AUTO_CLEANUP:-true}"
-AUTO_WAIT_FOR_MERGE_RAW="${MUSAFETY_CODEX_WAIT_FOR_MERGE:-true}"
-OPENSPEC_AUTO_INIT_RAW="${MUSAFETY_OPENSPEC_AUTO_INIT:-true}"
-OPENSPEC_PLAN_SLUG_OVERRIDE="${MUSAFETY_OPENSPEC_PLAN_SLUG:-}"
-OPENSPEC_CHANGE_SLUG_OVERRIDE="${MUSAFETY_OPENSPEC_CHANGE_SLUG:-}"
-OPENSPEC_CAPABILITY_SLUG_OVERRIDE="${MUSAFETY_OPENSPEC_CAPABILITY_SLUG:-}"
-
-normalize_bool() {
-  local raw="${1:-}"
-  local fallback="${2:-0}"
-  local lowered
-  lowered="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-  case "$lowered" in
-    1|true|yes|on) printf '1' ;;
-    0|false|no|off) printf '0' ;;
-    '') printf '%s' "$fallback" ;;
-    *) printf '%s' "$fallback" ;;
-  esac
-}
-
-AUTO_FINISH="$(normalize_bool "$AUTO_FINISH_RAW" "1")"
-AUTO_REVIEW_ON_CONFLICT="$(normalize_bool "$AUTO_REVIEW_ON_CONFLICT_RAW" "1")"
-AUTO_CLEANUP="$(normalize_bool "$AUTO_CLEANUP_RAW" "1")"
-AUTO_WAIT_FOR_MERGE="$(normalize_bool "$AUTO_WAIT_FOR_MERGE_RAW" "1")"
-OPENSPEC_AUTO_INIT="$(normalize_bool "$OPENSPEC_AUTO_INIT_RAW" "1")"
+GH_PR_REF="${MUSAFETY_GH_PR_REF:-}"
+GH_REPO_REF="${MUSAFETY_GH_REPO:-}"
+GH_SYNC_FLAG=""
 
 if [[ -n "$BASE_BRANCH" ]]; then
   BASE_BRANCH_EXPLICIT=1
@@ -57,36 +33,20 @@ while [[ $# -gt 0 ]]; do
       CODEX_BIN="${2:-$CODEX_BIN}"
       shift 2
       ;;
-    --auto-finish)
-      AUTO_FINISH=1
+    --pr)
+      GH_PR_REF="${2:-$GH_PR_REF}"
+      shift 2
+      ;;
+    --repo)
+      GH_REPO_REF="${2:-$GH_REPO_REF}"
+      shift 2
+      ;;
+    --gh-sync)
+      GH_SYNC_FLAG="--gh-sync"
       shift
       ;;
-    --no-auto-finish)
-      AUTO_FINISH=0
-      shift
-      ;;
-    --auto-review-on-conflict)
-      AUTO_REVIEW_ON_CONFLICT=1
-      shift
-      ;;
-    --no-auto-review-on-conflict)
-      AUTO_REVIEW_ON_CONFLICT=0
-      shift
-      ;;
-    --cleanup)
-      AUTO_CLEANUP=1
-      shift
-      ;;
-    --no-cleanup)
-      AUTO_CLEANUP=0
-      shift
-      ;;
-    --wait-for-merge)
-      AUTO_WAIT_FOR_MERGE=1
-      shift
-      ;;
-    --no-wait-for-merge)
-      AUTO_WAIT_FOR_MERGE=0
+    --no-gh-sync)
+      GH_SYNC_FLAG="--no-gh-sync"
       shift
       ;;
     --)
@@ -130,160 +90,6 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 fi
 repo_root="$(git rev-parse --show-toplevel)"
 
-sanitize_slug() {
-  local raw="$1"
-  local fallback="${2:-task}"
-  local slug
-  slug="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-{2,}/-/g')"
-  if [[ -z "$slug" ]]; then
-    slug="$fallback"
-  fi
-  printf '%s' "$slug"
-}
-
-resolve_openspec_plan_slug() {
-  local branch_name="$1"
-  local task_slug
-  task_slug="$(sanitize_slug "$TASK_NAME" "task")"
-  if [[ -n "$OPENSPEC_PLAN_SLUG_OVERRIDE" ]]; then
-    sanitize_slug "$OPENSPEC_PLAN_SLUG_OVERRIDE" "$task_slug"
-    return 0
-  fi
-  sanitize_slug "${branch_name//\//-}" "$task_slug"
-}
-
-resolve_openspec_change_slug() {
-  local branch_name="$1"
-  local task_slug
-  task_slug="$(sanitize_slug "$TASK_NAME" "task")"
-  if [[ -n "$OPENSPEC_CHANGE_SLUG_OVERRIDE" ]]; then
-    sanitize_slug "$OPENSPEC_CHANGE_SLUG_OVERRIDE" "$task_slug"
-    return 0
-  fi
-  sanitize_slug "${branch_name//\//-}" "$task_slug"
-}
-
-resolve_openspec_capability_slug() {
-  local task_slug
-  task_slug="$(sanitize_slug "$TASK_NAME" "task")"
-  if [[ -n "$OPENSPEC_CAPABILITY_SLUG_OVERRIDE" ]]; then
-    sanitize_slug "$OPENSPEC_CAPABILITY_SLUG_OVERRIDE" "$task_slug"
-    return 0
-  fi
-  sanitize_slug "$task_slug" "general-behavior"
-}
-
-hydrate_local_helper_in_worktree() {
-  local worktree="$1"
-  local relative_path="$2"
-  local worktree_target="${worktree}/${relative_path}"
-  local source_path=""
-
-  if [[ -e "$worktree_target" ]]; then
-    return 0
-  fi
-
-  if [[ -f "${repo_root}/${relative_path}" ]]; then
-    source_path="${repo_root}/${relative_path}"
-  elif [[ -f "${repo_root}/templates/${relative_path}" ]]; then
-    source_path="${repo_root}/templates/${relative_path}"
-  fi
-
-  if [[ -z "$source_path" ]]; then
-    return 0
-  fi
-
-  mkdir -p "$(dirname "$worktree_target")"
-  cp "$source_path" "$worktree_target"
-  if [[ -x "$source_path" ]]; then
-    chmod +x "$worktree_target"
-  fi
-
-  echo "[codex-agent] Hydrated local helper in sandbox: ${relative_path}"
-}
-
-resolve_start_base_branch() {
-  if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -n "$BASE_BRANCH" ]]; then
-    printf '%s' "$BASE_BRANCH"
-    return 0
-  fi
-
-  local configured_base
-  configured_base="$(git -C "$repo_root" config --get multiagent.baseBranch || true)"
-  if [[ -n "$configured_base" ]]; then
-    printf '%s' "$configured_base"
-    return 0
-  fi
-
-  printf 'dev'
-}
-
-resolve_start_ref() {
-  local base_branch="$1"
-  git -C "$repo_root" fetch origin "$base_branch" --quiet >/dev/null 2>&1 || true
-  if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
-    printf 'origin/%s' "$base_branch"
-    return 0
-  fi
-  if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${base_branch}"; then
-    printf '%s' "$base_branch"
-    return 0
-  fi
-  return 1
-}
-
-restore_repo_branch_if_changed() {
-  local expected_branch="$1"
-  if [[ -z "$expected_branch" || "$expected_branch" == "HEAD" ]]; then
-    return 0
-  fi
-  local current_branch
-  current_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  if [[ -z "$current_branch" || "$current_branch" == "$expected_branch" ]]; then
-    return 0
-  fi
-  git -C "$repo_root" checkout "$expected_branch" >/dev/null 2>&1
-}
-
-start_sandbox_fallback() {
-  local base_branch start_ref timestamp task_slug agent_slug branch_name_base branch_name suffix
-  local worktree_root worktree_path
-
-  base_branch="$(resolve_start_base_branch)"
-  if ! start_ref="$(resolve_start_ref "$base_branch")"; then
-    echo "[codex-agent] Unable to resolve base ref for fallback sandbox start: ${base_branch}" >&2
-    return 1
-  fi
-
-  timestamp="$(date +%Y%m%d-%H%M%S)"
-  task_slug="$(sanitize_slug "$TASK_NAME" "task")"
-  agent_slug="$(sanitize_slug "$AGENT_NAME" "agent")"
-  branch_name_base="agent/${agent_slug}/${timestamp}-${task_slug}"
-  branch_name="$branch_name_base"
-  suffix=2
-  while git -C "$repo_root" show-ref --verify --quiet "refs/heads/${branch_name}"; do
-    branch_name="${branch_name_base}-${suffix}"
-    suffix=$((suffix + 1))
-  done
-
-  worktree_root="${repo_root}/.omx/agent-worktrees"
-  mkdir -p "$worktree_root"
-  worktree_path="${worktree_root}/${branch_name//\//__}"
-  if [[ -e "$worktree_path" ]]; then
-    echo "[codex-agent] Fallback worktree path already exists: $worktree_path" >&2
-    return 1
-  fi
-
-  git -C "$repo_root" worktree add -b "$branch_name" "$worktree_path" "$start_ref" >/dev/null
-  git -C "$repo_root" config "branch.${branch_name}.musafetyBase" "$base_branch" >/dev/null 2>&1 || true
-  if git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
-    git -C "$worktree_path" branch --set-upstream-to="origin/${base_branch}" "$branch_name" >/dev/null 2>&1 || true
-  fi
-
-  printf '[agent-branch-start] Created branch: %s\n' "$branch_name"
-  printf '[agent-branch-start] Worktree: %s\n' "$worktree_path"
-}
-
 if [[ ! -x "${repo_root}/scripts/agent-branch-start.sh" ]]; then
   echo "[codex-agent] Missing scripts/agent-branch-start.sh. Run: gx setup" >&2
   exit 1
@@ -293,54 +99,105 @@ start_args=("$TASK_NAME" "$AGENT_NAME")
 if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 ]]; then
   start_args+=("$BASE_BRANCH")
 fi
+if [[ -n "$GH_PR_REF" ]]; then
+  start_args+=(--pr "$GH_PR_REF")
+fi
+if [[ -n "$GH_REPO_REF" ]]; then
+  start_args+=(--repo "$GH_REPO_REF")
+fi
+if [[ -n "$GH_SYNC_FLAG" ]]; then
+  start_args+=("$GH_SYNC_FLAG")
+fi
 
-initial_repo_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-start_output=""
-start_status=0
-set +e
-start_output="$(MUSAFETY_OPENSPEC_AUTO_INIT=0 bash "${repo_root}/scripts/agent-branch-start.sh" "${start_args[@]}" 2>&1)"
-start_status=$?
-set -e
+derive_worktree_session_key() {
+  local worktree="$1"
+  local digest=""
+
+  if command -v sha256sum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$worktree" | sha256sum | awk '{print $1}' | cut -c1-20)"
+  elif command -v shasum >/dev/null 2>&1; then
+    digest="$(printf '%s' "$worktree" | shasum -a 256 | awk '{print $1}' | cut -c1-20)"
+  fi
+
+  if [[ -z "$digest" ]]; then
+    digest="$(printf '%s' "$worktree" | tr -cs 'a-zA-Z0-9' '-' | sed -E 's/^-+//; s/-+$//' | cut -c1-40)"
+  fi
+
+  if [[ -z "$digest" ]]; then
+    digest="sandbox"
+  fi
+
+  printf 'worktree:%s' "$digest"
+}
+
+export_worktree_mem0_env() {
+  local worktree="$1"
+  local mem0_dir="${worktree}/.omx/mem0"
+  local notepad_path="${mem0_dir}/notepad.md"
+  local project_memory_path="${mem0_dir}/project-memory.json"
+  local scope_path="${mem0_dir}/worktree-scope.json"
+
+  export OMX_MEM0_SCOPE="worktree"
+  export OMX_MEM0_DIR="$mem0_dir"
+  if [[ -f "$notepad_path" ]]; then
+    export OMX_NOTEPAD_PATH="$notepad_path"
+  fi
+  if [[ -f "$project_memory_path" ]]; then
+    export OMX_PROJECT_MEMORY_PATH="$project_memory_path"
+  fi
+  if [[ -f "$scope_path" ]]; then
+    export OMX_MEM0_SCOPE_PATH="$scope_path"
+  fi
+
+  if [[ -z "${CODEX_AUTH_SESSION_KEY:-}" ]]; then
+    export CODEX_AUTH_SESSION_KEY="$(derive_worktree_session_key "$worktree")"
+    echo "[codex-agent] Scoped CODEX_AUTH_SESSION_KEY to ${CODEX_AUTH_SESSION_KEY}"
+  fi
+
+  echo "[codex-agent] Worktree mem0 scope: $mem0_dir"
+}
+
+resolve_finish_base_branch() {
+  local branch="$1"
+  local stored_base=""
+
+  stored_base="$(git -C "$repo_root" config --get "branch.${branch}.musafetyBase" || true)"
+  if [[ -n "$stored_base" ]]; then
+    printf '%s' "$stored_base"
+    return
+  fi
+
+  if [[ -n "$BASE_BRANCH" ]]; then
+    printf '%s' "$BASE_BRANCH"
+  fi
+}
+
+render_finish_hint() {
+  local branch="$1"
+  local base="${2:-}"
+  local hint=""
+
+  hint="bash scripts/agent-branch-finish.sh --branch \"${branch}\""
+  if [[ -n "$base" ]]; then
+    hint="${hint} --base \"${base}\""
+  fi
+  hint="${hint} --via-pr --wait-for-merge --cleanup"
+  if [[ -n "$GH_PR_REF" ]]; then
+    hint="${hint} --pr \"${GH_PR_REF}\""
+  fi
+  if [[ -n "$GH_REPO_REF" ]]; then
+    hint="${hint} --repo \"${GH_REPO_REF}\""
+  fi
+
+  printf '%s' "$hint"
+}
+
+start_output="$(bash "${repo_root}/scripts/agent-branch-start.sh" "${start_args[@]}")"
+printf '%s\n' "$start_output"
 
 worktree_path="$(printf '%s\n' "$start_output" | sed -n 's/^\[agent-branch-start\] Worktree: //p' | tail -n1)"
-current_repo_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-resolved_repo_root="$(cd "$repo_root" && pwd -P)"
-resolved_worktree_path=""
-if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
-  resolved_worktree_path="$(cd "$worktree_path" && pwd -P)"
-fi
-
-fallback_reason=""
-if [[ "$start_status" -ne 0 ]]; then
-  fallback_reason="starter exited with status ${start_status}"
-elif [[ -z "$worktree_path" ]]; then
-  fallback_reason="starter did not report worktree path"
-elif [[ -n "$resolved_worktree_path" && "$resolved_worktree_path" == "$resolved_repo_root" ]]; then
-  fallback_reason="starter pointed to active checkout path"
-elif [[ -n "$initial_repo_branch" && -n "$current_repo_branch" && "$current_repo_branch" != "$initial_repo_branch" ]]; then
-  fallback_reason="starter switched active checkout branch"
-fi
-
-if [[ -n "$fallback_reason" ]]; then
-  if ! restore_repo_branch_if_changed "$initial_repo_branch"; then
-    echo "[codex-agent] agent-branch-start changed the active checkout branch and restore failed." >&2
-    echo "[codex-agent] Run 'gx setup --target ${repo_root}' and 'gx doctor --target ${repo_root}', then retry." >&2
-    exit 1
-  fi
-  if [[ -n "$start_output" ]]; then
-    printf '%s\n' "$start_output" >&2
-  fi
-  echo "[codex-agent] Unsafe starter output (${fallback_reason}); creating sandbox worktree directly." >&2
-  start_output="$(start_sandbox_fallback)"
-  printf '%s\n' "$start_output"
-  worktree_path="$(printf '%s\n' "$start_output" | sed -n 's/^\[agent-branch-start\] Worktree: //p' | tail -n1)"
-else
-  printf '%s\n' "$start_output"
-fi
-
 if [[ -z "$worktree_path" ]]; then
-  echo "[codex-agent] Could not determine sandbox worktree path from sandbox startup output." >&2
-  echo "[codex-agent] Run 'gx setup --target ${repo_root}' and 'gx doctor --target ${repo_root}', then retry." >&2
+  echo "[codex-agent] Could not determine sandbox worktree path from agent-branch-start output." >&2
   exit 1
 fi
 
@@ -349,380 +206,7 @@ if [[ ! -d "$worktree_path" ]]; then
   exit 1
 fi
 
-has_origin_remote() {
-  git -C "$repo_root" remote get-url origin >/dev/null 2>&1
-}
-
-resolve_worktree_base_branch() {
-  local _wt="$1"
-  if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -n "$BASE_BRANCH" ]]; then
-    printf '%s' "$BASE_BRANCH"
-    return 0
-  fi
-
-  local configured_base
-  configured_base="$(git -C "$repo_root" config --get multiagent.baseBranch || true)"
-  if [[ -n "$configured_base" ]]; then
-    printf '%s' "$configured_base"
-    return 0
-  fi
-
-  printf 'dev'
-}
-
-sync_worktree_with_base() {
-  local wt="$1"
-  if ! has_origin_remote; then
-    return 0
-  fi
-
-  local base_branch
-  base_branch="$(resolve_worktree_base_branch "$wt")"
-  if [[ -z "$base_branch" ]]; then
-    return 0
-  fi
-
-  if ! git -C "$wt" fetch origin "$base_branch" --quiet; then
-    echo "[codex-agent] Warning: could not fetch origin/${base_branch} before task start." >&2
-    return 0
-  fi
-
-  if ! git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
-    return 0
-  fi
-
-  local behind_count
-  behind_count="$(git -C "$wt" rev-list --left-right --count "HEAD...origin/${base_branch}" 2>/dev/null | awk '{print $2}')"
-  behind_count="${behind_count:-0}"
-  if [[ "$behind_count" -le 0 ]]; then
-    return 0
-  fi
-
-  local branch
-  branch="$(git -C "$wt" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  echo "[codex-agent] Task sync: '${branch}' is behind origin/${base_branch} by ${behind_count} commit(s). Rebasing before launch..."
-  if ! git -C "$wt" rebase "origin/${base_branch}"; then
-    echo "[codex-agent] Task sync failed. Resolve and continue in sandbox:" >&2
-    echo "  git -C \"$wt\" rebase --continue" >&2
-    echo "  # or abort" >&2
-    echo "  git -C \"$wt\" rebase --abort" >&2
-    return 1
-  fi
-  echo "[codex-agent] Task sync complete."
-  return 0
-}
-
-ensure_openspec_plan_workspace() {
-  local wt="$1"
-  local branch="$2"
-
-  if [[ "$OPENSPEC_AUTO_INIT" -ne 1 ]]; then
-    return 0
-  fi
-
-  hydrate_local_helper_in_worktree "$wt" "scripts/openspec/init-plan-workspace.sh"
-
-  local openspec_script="${wt}/scripts/openspec/init-plan-workspace.sh"
-  if [[ ! -f "$openspec_script" ]]; then
-    echo "[codex-agent] Missing OpenSpec init script in sandbox: ${openspec_script}" >&2
-    echo "[codex-agent] Run 'gx setup --target ${repo_root}' and retry." >&2
-    return 1
-  fi
-  if [[ ! -x "$openspec_script" ]]; then
-    chmod +x "$openspec_script" 2>/dev/null || true
-  fi
-
-  local plan_slug
-  plan_slug="$(resolve_openspec_plan_slug "$branch")"
-  local init_output=""
-  if ! init_output="$(
-    cd "$wt"
-    bash "scripts/openspec/init-plan-workspace.sh" "$plan_slug" 2>&1
-  )"; then
-    printf '%s\n' "$init_output" >&2
-    echo "[codex-agent] OpenSpec workspace initialization failed for plan '${plan_slug}'." >&2
-    return 1
-  fi
-  if [[ -n "$init_output" ]]; then
-    printf '%s\n' "$init_output"
-  fi
-  echo "[codex-agent] OpenSpec plan workspace: ${wt}/openspec/plan/${plan_slug}"
-}
-
-ensure_openspec_change_workspace() {
-  local wt="$1"
-  local branch="$2"
-
-  if [[ "$OPENSPEC_AUTO_INIT" -ne 1 ]]; then
-    return 0
-  fi
-
-  hydrate_local_helper_in_worktree "$wt" "scripts/openspec/init-change-workspace.sh"
-
-  local openspec_script="${wt}/scripts/openspec/init-change-workspace.sh"
-  if [[ ! -f "$openspec_script" ]]; then
-    echo "[codex-agent] Missing OpenSpec change init script in sandbox: ${openspec_script}" >&2
-    echo "[codex-agent] Run 'gx setup --target ${repo_root}' and retry." >&2
-    return 1
-  fi
-  if [[ ! -x "$openspec_script" ]]; then
-    chmod +x "$openspec_script" 2>/dev/null || true
-  fi
-
-  local change_slug capability_slug init_output=""
-  change_slug="$(resolve_openspec_change_slug "$branch")"
-  capability_slug="$(resolve_openspec_capability_slug)"
-  if ! init_output="$(
-    cd "$wt"
-    bash "scripts/openspec/init-change-workspace.sh" "$change_slug" "$capability_slug" 2>&1
-  )"; then
-    printf '%s\n' "$init_output" >&2
-    echo "[codex-agent] OpenSpec workspace initialization failed for change '${change_slug}'." >&2
-    return 1
-  fi
-  if [[ -n "$init_output" ]]; then
-    printf '%s\n' "$init_output"
-  fi
-  echo "[codex-agent] OpenSpec change workspace: ${wt}/openspec/changes/${change_slug}"
-}
-
-worktree_has_changes() {
-  local wt="$1"
-  if ! git -C "$wt" diff --quiet -- . ":(exclude).omx/state/agent-file-locks.json"; then
-    return 0
-  fi
-  if ! git -C "$wt" diff --cached --quiet -- . ":(exclude).omx/state/agent-file-locks.json"; then
-    return 0
-  fi
-  if [[ -n "$(git -C "$wt" ls-files --others --exclude-standard)" ]]; then
-    return 0
-  fi
-  return 1
-}
-
-claim_changed_files() {
-  local wt="$1"
-  local branch="$2"
-  local lock_script="${repo_root}/scripts/agent-file-locks.py"
-
-  if [[ ! -x "$lock_script" ]]; then
-    return 0
-  fi
-
-  local changed_raw deleted_raw
-  changed_raw="$({
-    git -C "$wt" diff --name-only -- . ":(exclude).omx/state/agent-file-locks.json";
-    git -C "$wt" diff --cached --name-only -- . ":(exclude).omx/state/agent-file-locks.json";
-    git -C "$wt" ls-files --others --exclude-standard;
-  } | sed '/^$/d' | sort -u)"
-
-  if [[ -n "$changed_raw" ]]; then
-    mapfile -t changed_files < <(printf '%s\n' "$changed_raw")
-    python3 "$lock_script" claim --branch "$branch" "${changed_files[@]}" >/dev/null 2>&1 || true
-  fi
-
-  deleted_raw="$({
-    git -C "$wt" diff --name-only --diff-filter=D -- . ":(exclude).omx/state/agent-file-locks.json";
-    git -C "$wt" diff --cached --name-only --diff-filter=D -- . ":(exclude).omx/state/agent-file-locks.json";
-  } | sed '/^$/d' | sort -u)"
-
-  if [[ -n "$deleted_raw" ]]; then
-    mapfile -t deleted_files < <(printf '%s\n' "$deleted_raw")
-    python3 "$lock_script" allow-delete --branch "$branch" "${deleted_files[@]}" >/dev/null 2>&1 || true
-  fi
-}
-
-auto_commit_worktree_changes() {
-  local wt="$1"
-  local branch="$2"
-
-  if ! worktree_has_changes "$wt"; then
-    return 0
-  fi
-
-  claim_changed_files "$wt" "$branch"
-  git -C "$wt" add -A
-
-  if git -C "$wt" diff --cached --quiet -- . ":(exclude).omx/state/agent-file-locks.json"; then
-    return 0
-  fi
-
-  local default_message="Auto-finish: ${TASK_NAME}"
-  local commit_message="${MUSAFETY_CODEX_AUTO_COMMIT_MESSAGE:-$default_message}"
-  local commit_output=""
-
-  if commit_output="$(git -C "$wt" commit -m "$commit_message" 2>&1)"; then
-    echo "[codex-agent] Auto-committed sandbox changes on '${branch}'."
-    return 0
-  fi
-
-  if auto_sync_for_commit_retry "$wt" "$branch"; then
-    claim_changed_files "$wt" "$branch"
-    git -C "$wt" add -A
-    if commit_output="$(git -C "$wt" commit -m "$commit_message" 2>&1)"; then
-      echo "[codex-agent] Auto-committed sandbox changes on '${branch}' after sync retry."
-      return 0
-    fi
-  fi
-
-  echo "[codex-agent] Auto-commit failed in sandbox. Keeping branch for manual review: $branch" >&2
-  if [[ -n "$commit_output" ]]; then
-    printf '%s\n' "$commit_output" >&2
-  fi
-  return 1
-}
-
-auto_sync_for_commit_retry() {
-  local wt="$1"
-  local branch="$2"
-
-  if ! has_origin_remote; then
-    return 1
-  fi
-
-  local base_branch
-  base_branch="$(resolve_worktree_base_branch "$wt")"
-  if [[ -z "$base_branch" ]]; then
-    return 1
-  fi
-
-  if ! git -C "$wt" fetch origin "$base_branch" --quiet; then
-    return 1
-  fi
-
-  if ! git -C "$wt" show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
-    return 1
-  fi
-
-  local behind_count
-  behind_count="$(git -C "$wt" rev-list --left-right --count "HEAD...origin/${base_branch}" 2>/dev/null | awk '{print $2}')"
-  behind_count="${behind_count:-0}"
-  if [[ "$behind_count" -le 0 ]]; then
-    return 1
-  fi
-
-  echo "[codex-agent] Auto-commit retry: '${branch}' is behind origin/${base_branch} by ${behind_count} commit(s). Syncing and retrying..."
-
-  local stash_ref=""
-  local stash_output=""
-  if worktree_has_changes "$wt"; then
-    if ! stash_output="$(git -C "$wt" stash push --include-untracked -m "codex-agent-autocommit-sync-${branch}-$(date +%s)" 2>&1)"; then
-      return 1
-    fi
-    stash_ref="$(printf '%s\n' "$stash_output" | grep -o 'stash@{[0-9]\+}' | head -n 1 || true)"
-  fi
-
-  if ! git -C "$wt" rebase "origin/${base_branch}" >/dev/null 2>&1; then
-    git -C "$wt" rebase --abort >/dev/null 2>&1 || true
-    if [[ -n "$stash_ref" ]]; then
-      git -C "$wt" stash pop "$stash_ref" >/dev/null 2>&1 || true
-    fi
-    return 1
-  fi
-
-  if [[ -n "$stash_ref" ]]; then
-    if ! git -C "$wt" stash pop "$stash_ref" >/dev/null 2>&1; then
-      echo "[codex-agent] Auto-commit retry could not re-apply local changes after sync. Manual resolution required in: $wt" >&2
-      return 1
-    fi
-  fi
-
-  return 0
-}
-
-looks_like_conflict_failure() {
-  local output="$1"
-  if grep -qiE 'preflight conflict detected|merge conflict detected|auto-sync failed while rebasing|rebase --continue|rebase --abort' <<< "$output"; then
-    return 0
-  fi
-  return 1
-}
-
-run_finish_flow() {
-  local wt="$1"
-  local branch="$2"
-  local finish_base_branch=""
-  local finish_output=""
-  local -a finish_args
-
-  finish_args=(--branch "$branch")
-  if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -n "$BASE_BRANCH" ]]; then
-    finish_base_branch="$BASE_BRANCH"
-  else
-    finish_base_branch="$(resolve_worktree_base_branch "$wt")"
-  fi
-  if [[ -n "$finish_base_branch" ]]; then
-    finish_args+=(--base "$finish_base_branch")
-  fi
-  if [[ "$AUTO_CLEANUP" -eq 1 ]]; then
-    finish_args+=(--cleanup)
-  fi
-  if [[ "$AUTO_WAIT_FOR_MERGE" -eq 1 ]]; then
-    finish_args+=(--wait-for-merge)
-  fi
-
-  if has_origin_remote; then
-    if ! command -v "${MUSAFETY_GH_BIN:-gh}" >/dev/null 2>&1 && ! command -v gh >/dev/null 2>&1; then
-      echo "[codex-agent] Auto-finish requires GitHub CLI for PR flow; command not found: ${MUSAFETY_GH_BIN:-gh}" >&2
-      return 2
-    fi
-    finish_args+=(--via-pr)
-  else
-    echo "[codex-agent] No origin remote detected; skipping auto-finish merge/PR pipeline." >&2
-    return 2
-  fi
-
-  if finish_output="$(bash "${repo_root}/scripts/agent-branch-finish.sh" "${finish_args[@]}" 2>&1)"; then
-    printf '%s\n' "$finish_output"
-    return 0
-  fi
-
-  printf '%s\n' "$finish_output" >&2
-
-  if [[ "$AUTO_REVIEW_ON_CONFLICT" -eq 1 ]] && looks_like_conflict_failure "$finish_output"; then
-    echo "[codex-agent] Auto-finish hit conflicts. Launching Codex conflict-review pass in sandbox..." >&2
-    local review_prompt
-    review_prompt="Resolve git conflicts for branch ${branch} against ${finish_base_branch:-dev}, then commit the resolution in this sandbox worktree and exit."
-
-    (
-      cd "$wt"
-      set +e
-      "$CODEX_BIN" "$review_prompt"
-      review_exit="$?"
-      set -e
-      if [[ "$review_exit" -ne 0 ]]; then
-        echo "[codex-agent] Conflict-review Codex pass exited with status ${review_exit}." >&2
-      fi
-    )
-
-    if finish_output="$(bash "${repo_root}/scripts/agent-branch-finish.sh" "${finish_args[@]}" 2>&1)"; then
-      printf '%s\n' "$finish_output"
-      return 0
-    fi
-
-    printf '%s\n' "$finish_output" >&2
-  fi
-
-  return 1
-}
-
-if ! sync_worktree_with_base "$worktree_path"; then
-  exit 1
-fi
-
-worktree_branch="$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-if [[ -z "$worktree_branch" || "$worktree_branch" == "HEAD" ]]; then
-  echo "[codex-agent] Could not determine sandbox branch for worktree: $worktree_path" >&2
-  exit 1
-fi
-
-if ! ensure_openspec_change_workspace "$worktree_path" "$worktree_branch"; then
-  exit 1
-fi
-
-if ! ensure_openspec_plan_workspace "$worktree_path" "$worktree_branch"; then
-  exit 1
-fi
+export_worktree_mem0_env "$worktree_path"
 
 echo "[codex-agent] Launching ${CODEX_BIN} in sandbox: $worktree_path"
 cd "$worktree_path"
@@ -732,49 +216,56 @@ codex_exit="$?"
 set -e
 
 cd "$repo_root"
-final_exit="$codex_exit"
-auto_finish_completed=0
 
-if [[ "$AUTO_FINISH" -eq 1 && -n "$worktree_branch" && "$worktree_branch" != "HEAD" ]]; then
-  if [[ "$AUTO_WAIT_FOR_MERGE" -eq 1 && "$AUTO_CLEANUP" -eq 1 ]]; then
-    echo "[codex-agent] Auto-finish enabled: commit -> push/PR -> wait for merge -> cleanup."
-  elif [[ "$AUTO_WAIT_FOR_MERGE" -eq 1 ]]; then
-    echo "[codex-agent] Auto-finish enabled: commit -> push/PR -> wait for merge (keep branch/worktree)."
-  elif [[ "$AUTO_CLEANUP" -eq 1 ]]; then
-    echo "[codex-agent] Auto-finish enabled: commit -> push/PR -> merge -> cleanup."
-  else
-    echo "[codex-agent] Auto-finish enabled: commit -> push/PR -> merge (keep branch/worktree)."
-  fi
-  if auto_commit_worktree_changes "$worktree_path" "$worktree_branch"; then
-    if run_finish_flow "$worktree_path" "$worktree_branch"; then
-      auto_finish_completed=1
-      echo "[codex-agent] Auto-finish completed for '${worktree_branch}'."
-    else
-      finish_status="$?"
-      if [[ "$finish_status" -eq 2 ]]; then
-        echo "[codex-agent] Auto-finish skipped for '${worktree_branch}' (no mergeable remote context)." >&2
-      else
-        echo "[codex-agent] Auto-finish did not complete; keeping sandbox for manual review: $worktree_path" >&2
-        if [[ "$final_exit" -eq 0 ]]; then
-          final_exit=1
-        fi
+final_exit="$codex_exit"
+worktree_branch="$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+finish_base_branch=""
+finish_hint=""
+if [[ -n "$worktree_branch" && "$worktree_branch" != "HEAD" ]]; then
+  finish_base_branch="$(resolve_finish_base_branch "$worktree_branch")"
+  finish_hint="$(render_finish_hint "$worktree_branch" "$finish_base_branch")"
+fi
+
+if [[ "$codex_exit" -eq 0 ]]; then
+  if [[ -x "${repo_root}/scripts/agent-branch-finish.sh" ]]; then
+    if [[ -n "$worktree_branch" && "$worktree_branch" != "HEAD" ]]; then
+      finish_args=(--branch "$worktree_branch")
+      if [[ -n "$finish_base_branch" ]]; then
+        finish_args+=(--base "$finish_base_branch")
       fi
-    fi
-  else
-    if [[ "$final_exit" -eq 0 ]]; then
+      finish_args+=(--via-pr --wait-for-merge --cleanup)
+      if [[ -n "$GH_PR_REF" ]]; then
+        finish_args+=(--pr "$GH_PR_REF")
+      fi
+      if [[ -n "$GH_REPO_REF" ]]; then
+        finish_args+=(--repo "$GH_REPO_REF")
+      fi
+
+      echo "[codex-agent] Codex finished successfully. Auto-finishing branch via PR merge + cleanup..."
+      if ! bash "${repo_root}/scripts/agent-branch-finish.sh" "${finish_args[@]}"; then
+        echo "[codex-agent] Auto-finish failed. Sandbox is kept for manual resolve/retry." >&2
+        if [[ -n "$finish_hint" ]]; then
+          echo "[codex-agent] Retry with: ${finish_hint}" >&2
+        fi
+        final_exit=1
+      fi
+    else
+      echo "[codex-agent] Could not determine sandbox branch name; skipping auto-finish." >&2
       final_exit=1
     fi
+  else
+    echo "[codex-agent] Missing scripts/agent-branch-finish.sh; skipping auto-finish." >&2
+    final_exit=1
   fi
+else
+  echo "[codex-agent] Skipping auto-finish because Codex exited with status ${codex_exit}."
 fi
 
 if [[ -x "${repo_root}/scripts/agent-worktree-prune.sh" ]]; then
-  echo "[codex-agent] Session ended (exit=${codex_exit}). Running worktree cleanup..."
+  echo "[codex-agent] Session ended (exit=${final_exit}). Running worktree cleanup..."
   prune_args=()
   if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 ]]; then
     prune_args+=(--base "$BASE_BRANCH")
-  fi
-  if [[ "$AUTO_CLEANUP" -eq 1 && "$auto_finish_completed" -eq 1 ]]; then
-    prune_args+=(--only-dirty-worktrees --delete-branches --delete-remote-branches)
   fi
   if ! bash "${repo_root}/scripts/agent-worktree-prune.sh" "${prune_args[@]}"; then
     echo "[codex-agent] Warning: automatic worktree cleanup failed." >&2
@@ -784,15 +275,13 @@ fi
 if [[ ! -d "$worktree_path" ]]; then
   echo "[codex-agent] Auto-cleaned sandbox worktree: $worktree_path"
 else
-  worktree_branch="$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   echo "[codex-agent] Sandbox worktree kept: $worktree_path"
   if [[ -n "$worktree_branch" && "$worktree_branch" != "HEAD" ]]; then
-    if [[ "$auto_finish_completed" -eq 1 ]]; then
-      echo "[codex-agent] Branch kept intentionally. Cleanup on demand: gx cleanup --branch \"${worktree_branch}\""
-    else
-      echo "[codex-agent] If finished, merge with: bash scripts/agent-branch-finish.sh --branch \"${worktree_branch}\" --base dev --via-pr --wait-for-merge"
-      echo "[codex-agent] Cleanup on demand: gx cleanup --branch \"${worktree_branch}\""
+    if [[ -z "$finish_hint" ]]; then
+      finish_base_branch="$(resolve_finish_base_branch "$worktree_branch")"
+      finish_hint="$(render_finish_hint "$worktree_branch" "$finish_base_branch")"
     fi
+    echo "[codex-agent] If finished, merge + clean with: ${finish_hint}"
   fi
 fi
 

@@ -1,6 +1,76 @@
+# Project-specific
+refs/
+poc/
+WEBU/
+examples/WEBU/
+examples/claudia/
+examples/claduio/
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Env/config
+.env
+.env.*
+!.env.example
+.python-version
+
+# Build artifacts
+build/
+dist/
+app/static/
+apps/app/static/
+deploy/helm/*/charts/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local
+.local/
+.worktrees/
+certs/
+
+.codex-lb/
+.sisyphus/
+
+.specstory/
+logs/*
+!logs/.gitkeep
+.dev-ports.json
+apps/logs/*.log
+
+.agents/hooks/state/
+.agents/.personality_migration
+.agents/version.json
+.agents/log/
+.venv
+
 .omx/
-node_modules
-oh-my-codex/
+
+# Keep OpenSpec plan workspaces local
+openspec/plan/*
+!openspec/plan/README.md
+!openspec/plan/PLANS.md
+!openspec/plan/migrate-multica-runtime-model/
+!openspec/plan/migrate-multica-runtime-model/**
+!openspec/plan/role-artifact-smoke-main/
+!openspec/plan/role-artifact-smoke-main/**
 
 # multiagent-safety:START
 .omx/
@@ -15,9 +85,9 @@ scripts/openspec/init-plan-workspace.sh
 scripts/openspec/init-change-workspace.sh
 .githooks/pre-commit
 .githooks/pre-push
-.githooks/post-merge
 oh-my-codex/
 .codex/skills/guardex/SKILL.md
+.codex/skills/guardex-merge-skills-to-dev/SKILL.md
 .claude/commands/guardex.md
 .omx/state/agent-file-locks.json
 # multiagent-safety:END
