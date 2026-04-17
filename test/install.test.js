@@ -356,6 +356,44 @@ test('setup provisions workflow files and repo config', () => {
   assert.equal(secondRun.status, 0, secondRun.stderr || secondRun.stdout);
 });
 
+test('setup --parent-workspace-view creates one-level-up VS Code workspace for repo + agent worktrees', () => {
+  const repoDir = initRepo();
+  const parentDir = path.dirname(repoDir);
+  const workspacePath = path.join(parentDir, `${path.basename(repoDir)}-branches.code-workspace`);
+
+  assert.equal(fs.existsSync(workspacePath), false, 'workspace file should not exist before setup');
+
+  const result = runNode(
+    ['setup', '--target', repoDir, '--no-global-install', '--parent-workspace-view'],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /parent VS Code workspace view/);
+  assert.match(result.stdout, /Parent workspace view:/);
+
+  assert.equal(fs.existsSync(workspacePath), true, 'setup should create parent workspace file');
+  const workspace = JSON.parse(fs.readFileSync(workspacePath, 'utf8'));
+  assert.deepEqual(workspace.folders, [
+    { path: path.basename(repoDir) },
+    { path: `${path.basename(repoDir)}/.omx/agent-worktrees` },
+  ]);
+  assert.equal(workspace.settings['scm.alwaysShowRepositories'], true);
+});
+
+test('setup --parent-workspace-view respects dry-run and does not write parent workspace file', () => {
+  const repoDir = initRepo();
+  const parentDir = path.dirname(repoDir);
+  const workspacePath = path.join(parentDir, `${path.basename(repoDir)}-branches.code-workspace`);
+
+  const result = runNode(
+    ['setup', '--target', repoDir, '--no-global-install', '--parent-workspace-view', '--dry-run'],
+    repoDir,
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /would-create\s+\.\.\/repo-branches\.code-workspace \(parent VS Code workspace view\)/);
+  assert.equal(fs.existsSync(workspacePath), false, 'dry run must not create parent workspace file');
+});
+
 test('setup refreshes existing managed AGENTS block to latest template policy', () => {
   const repoDir = initRepo();
   const legacyAgents = `# AGENTS

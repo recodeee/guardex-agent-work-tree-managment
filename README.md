@@ -111,6 +111,11 @@ gx doctor
 # setup + repair another repo without switching your current repo checkout
 gx setup --target /path/to/repo
 gx doctor --target /path/to/repo
+# optional: from parent folder, generate VS Code workspace view for repo + agent worktrees
+cd /path/to
+gx setup --target ./repo --parent-workspace-view
+# open this in VS Code to manage both base repo and .omx/agent-worktrees
+code ./repo-branches.code-workspace
 
 # protected branch management
 gx protect list
@@ -198,6 +203,7 @@ gx agents stop
 - `gx init` is alias of `gx setup`.
 - Setup/doctor can install missing global OMX/OpenSpec/codex-auth with explicit Y/N confirmation.
 - `gx setup` checks GitHub CLI (`gh`) and prints install guidance if missing.
+- Optional parent-folder VS Code Source Control view: `gx setup --target /path/to/repo --parent-workspace-view` creates `../<repo>-branches.code-workspace`.
 - Interactive self-update prompt defaults to **No** (`[y/N]`).
 - In initialized repos, `setup`/`install`/`fix` block protected-base writes unless explicitly overridden.
 - Direct commits/pushes to protected branches are blocked by default.
@@ -365,6 +371,13 @@ npm pack --dry-run
 ```
 
 ## Release notes
+
+### v5.0.15
+
+- Added `gx setup --parent-workspace-view` to generate a parent-folder VS Code workspace (`../<repo>-branches.code-workspace`) that shows both the base repo and `.omx/agent-worktrees` in Source Control.
+- Added dry-run-safe parent workspace operations (`would-create` / `would-update`) and setup output that prints the created workspace path.
+- Added regression coverage for parent workspace generation and dry-run behavior.
+- Bumped package version from `5.0.14` to `5.0.15`.
 
 ### v5.0.14
 

@@ -184,7 +184,7 @@ const SUGGESTIBLE_COMMANDS = [
 ];
 const CLI_COMMAND_DESCRIPTIONS = [
   ['status', 'Show GuardeX CLI + service health without modifying files'],
-  ['setup', 'Install + repair guardrails in a git repo (supports --no-gitignore)'],
+  ['setup', 'Install + repair guardrails in a git repo (supports --no-gitignore, --parent-workspace-view)'],
   ['init', 'Alias of setup (bootstrap + repair guardrails in a git repo)'],
   ['doctor', 'Repair safety setup drift, then verify repo safety'],
   ['report', 'Generate security/safety reports (for example: OpenSSF scorecard)'],
@@ -445,6 +445,7 @@ NOTES
   - ${TOOL_NAME} setup asks for Y/N approval before global installs
   - ${TOOL_NAME} setup checks GitHub CLI (gh) and prints install guidance if missing
   - For other repos: ${SHORT_TOOL_NAME} setup --target <repo-path> then ${SHORT_TOOL_NAME} doctor --target <repo-path>
+  - Optional parent-folder Source Control view: ${SHORT_TOOL_NAME} setup --target <repo-path> --parent-workspace-view
   - In initialized repos, setup/install/fix block in-place writes on protected main by default
   - setup/doctor auto-finish clean pending agent/* branches via PR flow into the current local base branch
   - doctor auto-runs in a sandbox agent branch/worktree on protected main and tries auto-finish PR flow
@@ -838,6 +839,14 @@ function configureHooks(repoRoot, dryRun) {
   return { status: 'set', key: 'core.hooksPath', value: '.githooks' };
 }
 
+function requireValue(rawArgs, index, flagName) {
+  const value = rawArgs[index + 1];
+  if (!value || value.startsWith('-')) {
+    throw new Error(`${flagName} requires a value`);
+  }
+  return value;
+}
+
 function parseCommonArgs(rawArgs, defaults) {
   const options = { ...defaults };
 
@@ -897,6 +906,76 @@ function parseCommonArgs(rawArgs, defaults) {
   }
 
   return options;
+}
+
+function parseSetupArgs(rawArgs, defaults) {
+  const setupDefaults = { ...defaults, parentWorkspaceView: false };
+  const forwardedArgs = [];
+
+  for (const arg of rawArgs) {
+    if (arg === '--parent-workspace-view') {
+      setupDefaults.parentWorkspaceView = true;
+      continue;
+    }
+    if (arg === '--no-parent-workspace-view') {
+      setupDefaults.parentWorkspaceView = false;
+      continue;
+    }
+    forwardedArgs.push(arg);
+  }
+
+  return parseCommonArgs(forwardedArgs, setupDefaults);
+}
+
+function normalizeWorkspacePath(relativePath) {
+  return String(relativePath || '.').replace(/\\/g, '/');
+}
+
+function buildParentWorkspaceView(repoRoot) {
+  const parentDir = path.dirname(repoRoot);
+  const workspaceFileName = `${path.basename(repoRoot)}-branches.code-workspace`;
+  const workspacePath = path.join(parentDir, workspaceFileName);
+  const repoRelativePath = normalizeWorkspacePath(path.relative(parentDir, repoRoot) || '.');
+  const worktreesRelativePath = normalizeWorkspacePath(
+    path.join(repoRelativePath === '.' ? '' : repoRelativePath, '.omx', 'agent-worktrees'),
+  );
+
+  return {
+    workspacePath,
+    payload: {
+      folders: [
+        { path: repoRelativePath },
+        { path: worktreesRelativePath },
+      ],
+      settings: {
+        'scm.alwaysShowRepositories': true,
+      },
+    },
+  };
+}
+
+function ensureParentWorkspaceView(repoRoot, dryRun) {
+  const { workspacePath, payload } = buildParentWorkspaceView(repoRoot);
+  const operationFile = path.relative(repoRoot, workspacePath) || path.basename(workspacePath);
+  const nextContent = `${JSON.stringify(payload, null, 2)}\n`;
+  const note = 'parent VS Code workspace view';
+
+  if (!fs.existsSync(workspacePath)) {
+    if (!dryRun) {
+      fs.writeFileSync(workspacePath, nextContent, 'utf8');
+    }
+    return { status: dryRun ? 'would-create' : 'created', file: operationFile, note };
+  }
+
+  const currentContent = fs.readFileSync(workspacePath, 'utf8');
+  if (currentContent === nextContent) {
+    return { status: 'unchanged', file: operationFile, note };
+  }
+
+  if (!dryRun) {
+    fs.writeFileSync(workspacePath, nextContent, 'utf8');
+  }
+  return { status: dryRun ? 'would-update' : 'updated', file: operationFile, note };
 }
 
 function hasGuardexBootstrapFiles(repoRoot) {
@@ -4284,7 +4363,7 @@ function report(rawArgs) {
 }
 
 function setup(rawArgs) {
-  const options = parseCommonArgs(rawArgs, {
+  const options = parseSetupArgs(rawArgs, {
     target: process.cwd(),
     force: false,
     skipAgents: false,
@@ -4331,6 +4410,9 @@ function setup(rawArgs) {
   assertProtectedMainWriteAllowed(options, 'setup');
   const installPayload = runInstallInternal(options);
   installPayload.operations.push(ensureSetupProtectedBranches(installPayload.repoRoot, Boolean(options.dryRun)));
+  if (options.parentWorkspaceView) {
+    installPayload.operations.push(ensureParentWorkspaceView(installPayload.repoRoot, Boolean(options.dryRun)));
+  }
   printOperations('Setup/install', installPayload, options.dryRun);
 
   const fixPayload = runFixInternal({
@@ -4347,6 +4429,11 @@ function setup(rawArgs) {
     console.log(`[${TOOL_NAME}] Dry run setup done.`);
     process.exitCode = 0;
     return;
+  }
+
+  if (options.parentWorkspaceView) {
+    const parentWorkspace = buildParentWorkspaceView(installPayload.repoRoot);
+    console.log(`[${TOOL_NAME}] Parent workspace view: ${parentWorkspace.workspacePath}`);
   }
 
   const scanResult = runScanInternal({ target: options.target, json: false });
