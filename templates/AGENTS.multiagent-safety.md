@@ -1,5 +1,5 @@
 <!-- multiagent-safety:START -->
-## Multi-Agent Execution Contract (GX)
+## Multi-Agent Execution Contract (multiagent-safety)
 
 0. Session plan comment + read gate (required)
 
@@ -10,17 +10,19 @@
 - Before deleting/replacing code, each agent must read the latest session comments/handoffs first and confirm the target code is in their owned scope.
 - If ownership is unclear or overlaps, stop that edit, post a blocker comment, and let the leader/integrator reassign scope.
 - For git isolation, each agent must start on a dedicated branch via `scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"`.
-- In-place branch mode is disallowed: never switch the active local/base checkout to an agent branch.
 - Treat the base branch (`main` or the user's current local base branch) as read-only while the agent branch is active.
 - Agent completion defaults to `scripts/codex-agent.sh`, which auto-finishes the branch (auto-commit changed files, push/create PR, attempt merge, and pull the local base branch after merge).
-- OMX completion policy: when a task is done, the agent must commit the task changes, push the agent branch, and create/update a PR for those changes (via `codex-agent` or `agent-branch-finish`).
 - Auto-finish now waits for required checks/merge and then cleans merged sandbox branch/worktree by default.
-- Use `--no-cleanup` only when you explicitly need to keep a merged sandbox for audit/debug follow-up.
-- If codex-agent auto-finish cannot complete, immediately run `scripts/agent-branch-finish.sh --branch "<agent-branch>" --base dev --via-pr --wait-for-merge` and keep the branch open until checks/review pass.
-- If merge/rebase conflicts block auto-finish, run a conflict-resolution review pass in that sandbox branch, then rerun `agent-branch-finish.sh --base dev --via-pr --wait-for-merge` until merged.
+- Cleanup for merged `agent/*` branches is mandatory; `agent-branch-finish` must not report completion while local/remote refs or sandbox worktree cleanup is still pending.
+- Cleanup automation must be branch-scoped: do not prune other agents' current worktrees during finish; only the source branch sandbox may be auto-removed.
+- Other agent worktrees may be pruned only when they are explicitly targeted or have no active local changes.
+- If codex-agent auto-finish cannot complete, immediately run `scripts/agent-branch-finish.sh --branch "<agent-branch>" --via-pr --wait-for-merge` and keep the branch open until checks/review pass.
+- If merge/rebase conflicts block auto-finish, run a conflict-resolution review pass in that sandbox branch, then rerun `agent-branch-finish.sh --via-pr` until merged.
 - Completion is not valid until these are true: commit exists on the agent branch, branch is pushed to `origin`, and PR/merge status is produced by `agent-branch-finish.sh` or `codex-agent`.
-- For every new task, including follow-up work in the same chat/session, if an assigned agent sub-branch/worktree is already open, continue in that sub-branch; otherwise create a fresh one from the current local base snapshot with `scripts/agent-branch-start.sh`.
+- Completion report must include the PR URL and explicit merge state (`OPEN`/`MERGED`); without this, the task is not complete.
+- For every new task, if an assigned agent sub-branch/worktree is already open, continue in that sub-branch; otherwise create a fresh one from the current local base snapshot with `scripts/agent-branch-start.sh`.
 - Never implement directly on the local/base branch checkout; keep it unchanged and perform all edits in the agent sub-branch/worktree.
+- Agent worktree startup must preserve the primary local checkout branch exactly as-is; branch switching is allowed only inside the agent worktree.
 - If the change publishes or bumps a version, the same change must also update release notes/changelog entries.
 
 1. Explicit ownership before edits
@@ -46,35 +48,66 @@
 - Verification commands + results
 - Risks / follow-ups
 
-## OpenSpec Workspaces (required for agent sub-branch changes)
+## OpenSpec Multi-Codex Change Management (owner + joined Codexes)
 
-OMX Codex execution flows must use OpenSpec. `scripts/codex-agent.sh` bootstraps
-per-branch OpenSpec workspaces automatically:
+Use this checklist for active OpenSpec changes when one owner Codex may receive help from joined Codexes (including other worktree Codexes).
 
-```text
-openspec/changes/<agent-branch-slug>/
-openspec/plan/<agent-branch-slug>/
-```
+Joined helper branches that merge into another `agent/*` branch are documentation-exempt assist lanes; they implement assigned scope only and report handoff evidence back to the owner branch artifacts.
 
-For manual `scripts/agent-branch-start.sh` usage, enable auto-bootstrap with
-`GUARDEX_OPENSPEC_AUTO_INIT=true` or scaffold manually before implementation:
+Checkpoint discipline (required): update the active change `tasks.md` during work, checkpoint-by-checkpoint, and keep checkbox state synchronized with current progress.
+
+**Definition of Done (applies to every active change):** the change is complete only when every checkbox below is checked AND the agent branch reaches `MERGED` state on `origin` with the PR URL + state recorded in the completion handoff. If verification halts (test failure, conflict, ambiguous result), append a `BLOCKED:` line under the cleanup section explaining the blocker and **STOP** — do not silently skip the cleanup pipeline. Surfacing a blocker is preferred over a half-finished completion.
+
+## 1. Specification
+
+- [ ] 1.1 Finalize proposal scope and acceptance criteria for the active change.
+- [ ] 1.2 Define normative requirements in the change spec (`specs/<capability>/spec.md`).
+
+## 2. Implementation
+
+- [ ] 2.1 Implement scoped behavior changes.
+- [ ] 2.2 Add/update focused regression coverage.
+
+## 3. Verification
+
+- [ ] 3.1 Run targeted project verification commands.
+- [ ] 3.2 Run `openspec validate <change-slug> --type change --strict`.
+- [ ] 3.3 Run `openspec validate --specs`.
+
+## 4. Collaboration (only when another Codex joins)
+
+- [ ] 4.1 Owner Codex records each joined Codex (branch/worktree + scope) before accepting work.
+- [ ] 4.2 Joined Codexes may review, propose solution tasks, and implement only within assigned scope.
+- [ ] 4.3 Owner Codex must acknowledge joined outputs (accept/revise/reject) before moving to cleanup.
+- [ ] 4.4 If no Codex joined, mark this section `N/A` and continue.
+
+## 5. Cleanup (mandatory; run before claiming completion)
+
+- [ ] 5.1 Run the cleanup pipeline: `bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup`. This handles commit → push → PR create → merge wait → worktree prune in one invocation.
+- [ ] 5.2 Record the PR URL and final merge state (`MERGED`) in the completion handoff.
+- [ ] 5.3 Confirm the sandbox worktree is gone (`git worktree list` no longer shows the agent path; `git branch -a` shows no surviving local/remote refs for the branch).
+
+For change specs that need explicit baseline requirement wording, use this pattern:
+
+## ADDED Requirements
+
+### Requirement: <change-slug> behavior
+The system SHALL enforce <change-slug> behavior as defined by this change.
+
+#### Scenario: Baseline acceptance
+- **WHEN** <change-slug> behavior is exercised
+- **THEN** the expected outcome is produced
+- **AND** regressions are covered by tests.
+
+## OpenSpec Plan Workspace (recommended)
+
+When work needs a durable planning phase, scaffold a plan workspace before implementation:
 
 ```bash
-bash scripts/openspec/init-change-workspace.sh "<change-slug>" "<capability-slug>"
 bash scripts/openspec/init-plan-workspace.sh "<plan-slug>"
 ```
 
-Expected change shape:
-
-```text
-openspec/changes/<change-slug>/
-  .openspec.yaml
-  proposal.md
-  tasks.md
-  specs/<capability-slug>/spec.md
-```
-
-Expected plan shape:
+Expected shape:
 
 ```text
 openspec/plan/<plan-slug>/
