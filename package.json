@@ -1,6 +1,6 @@
 {
   "name": "@imdeadpool/guardex",
-  "version": "6.0.0",
+  "version": "6.0.1",
   "description": "GuardeX: the Guardian T-Rex for your repo, with hardened multi-agent git guardrails.",
   "license": "MIT",
   "preferGlobal": true,
@@ -10,6 +10,8 @@
     "multiagent-safety": "bin/multiagent-safety.js"
   },
   "scripts": {
+    "prepack": "node pack-helpers/dereference-templates.mjs",
+    "postpack": "git checkout -- templates",
     "test": "node --test test/*.test.js",
     "agent:codex": "bash ./scripts/codex-agent.sh",
     "agent:branch:start": "bash ./scripts/agent-branch-start.sh",
