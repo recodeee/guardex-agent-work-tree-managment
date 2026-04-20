@@ -2,6 +2,7 @@
 
 import {
   type CSSProperties,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   useCallback,
   useEffect,
@@ -1751,12 +1752,39 @@ const INSTALL_STEPS: TutorialStep[] = [
     worktrees: [],
     codeLines: [
       { parts: [c('$ gx doctor', 'c')] },
-      { parts: [c('✓ node v22.x  ·  git 2.45  ·  gh 2.60  ·  python3 3.13', 'f')] },
-      { parts: [c('⚠ agent git hooks missing in .githooks/')] },
-      { parts: [c('⚠ agent-file-locks.py not installed in scripts/')] },
-      { parts: [c('⚠ no OpenSpec workspace at openspec/')] },
-      { parts: [c('')] },
-      { parts: [c('Run: gx setup --repair', 'p')] },
+      { parts: [c('[guardex] Doctor/fix: ', 'n'), c('/home/you/your-repo', 's')] },
+      { parts: [c('  - unchanged    .omx')] },
+      { parts: [c('  - unchanged    .omx/state')] },
+      { parts: [c('  - unchanged    .omx/logs')] },
+      { parts: [c('  - unchanged    .omx/plans')] },
+      { parts: [c('  - unchanged    .omx/agent-worktrees')] },
+      { parts: [c('  - unchanged    scripts/agent-branch-start.sh')] },
+      { parts: [c('  - unchanged    scripts/agent-branch-finish.sh')] },
+      { parts: [c('  - unchanged    scripts/codex-agent.sh')] },
+      { parts: [c('  - '), c('skipped-conflict', 'n'), c(' scripts/review-bot-watch.sh')] },
+      { parts: [c('  - unchanged    scripts/agent-worktree-prune.sh')] },
+      { parts: [c('  - unchanged    scripts/agent-file-locks.py')] },
+      { parts: [c('  - '), c('skipped-conflict', 'n'), c(' scripts/install-agent-git-hooks.sh')] },
+      { parts: [c('  - unchanged    .githooks/pre-commit')] },
+      { parts: [c('  - unchanged    .githooks/pre-push')] },
+      { parts: [c('  - unchanged    .githooks/post-merge')] },
+      { parts: [c('  - unchanged    .githooks/post-checkout')] },
+      { parts: [c('  - unchanged    .gitignore')] },
+      { parts: [c('  - hooksPath    set core.hooksPath=.githooks')] },
+      { parts: [c('[guardex] Scan target: ', 'n'), c('/home/you/your-repo', 's')] },
+      { parts: [c('[guardex] Branch: ', 'n'), c('dev', 'f')] },
+      { parts: [c('[guardex] '), c('✅ No safety issues detected.', 'f')] },
+      {
+        parts: [
+          c('[guardex] Auto-finish sweep (base=dev): ', 'n'),
+          c('attempted=5', 'f'),
+          c(', completed=0, skipped=15, failed=5'),
+        ],
+      },
+      { parts: [c('  [skip] agent/claude-16-11/… already merged into dev.', 'c')] },
+      { parts: [c('  [skip] agent/codex-20-20/… already merged into dev.', 'c')] },
+      { parts: [c('  [fail] agent/…/rebase-in-progress → resolve conflicts.', 'c')] },
+      { parts: [c('[guardex] '), c('✅ Repo is fully safe.', 'f')] },
     ],
     statusBranch: 'dev',
   },
@@ -2143,6 +2171,48 @@ function Icon({ name, className, style }: { name: IconName; className?: string; 
 
 /* ======================= COMPONENTS ======================= */
 
+function ToolRowCopyBtn({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const onCopy = async (e: ReactMouseEvent) => {
+    e.stopPropagation()
+    try {
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(value)
+      } else if (typeof document !== 'undefined') {
+        const ta = document.createElement('textarea')
+        ta.value = value
+        ta.setAttribute('readonly', '')
+        ta.style.position = 'fixed'
+        ta.style.opacity = '0'
+        document.body.appendChild(ta)
+        ta.select()
+        document.execCommand('copy')
+        document.body.removeChild(ta)
+      }
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1400)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`t-copy ${copied ? 'copied' : ''}`}
+      onClick={onCopy}
+      aria-label={copied ? 'Copied' : 'Copy command'}
+      title={copied ? 'Copied' : 'Copy command'}
+    >
+      <Icon
+        name={copied ? 'check' : 'copy'}
+        style={{ width: 12, height: 12 }}
+      />
+    </button>
+  )
+}
+
 function MessageBubble({ message, delay }: { message: StepMessage; delay: number }) {
   const style: CSSProperties = { animationDelay: `${delay}ms` }
 
@@ -2157,12 +2227,13 @@ function MessageBubble({ message, delay }: { message: StepMessage; delay: number
           </div>
           <div className="tool-list">
             {message.rows.map((row, i) => (
-              <div className="t-row" key={`${row.label}-${row.value}-${i}`}>
+              <div className={`t-row ${row.kind}`} key={`${row.label}-${row.value}-${i}`}>
                 <div className={`t-ico ${row.kind}`}>{iconGlyph(row.kind)}</div>
-                <div>
+                <div className="t-body">
                   <span className="lbl">{row.label}</span>
                   <span className="vl">{row.value}</span>
                 </div>
+                {row.kind === 'shell' ? <ToolRowCopyBtn value={row.value} /> : null}
               </div>
             ))}
           </div>
@@ -2433,12 +2504,42 @@ export default function Home() {
     <main className="how-it-works-page">
       <header className="top">
         <div className="lft">
-          <div className="mark" aria-hidden>
-            R
+          <div className="brand-block">
+            <div className="mark" aria-hidden>
+              R
+            </div>
+            <div>
+              <div className="title">How it works</div>
+              <div className="sub">Watch an agent run — from prompt to merged PR</div>
+            </div>
           </div>
-          <div>
-            <div className="title">How it works</div>
-            <div className="sub">Watch an agent run — from prompt to merged PR</div>
+
+          <div className="brand-divider" aria-hidden />
+
+          <div className="brand-block guardex-brand">
+            <div className="mark guardex-mark" aria-hidden>
+              <svg
+                viewBox="0 0 48 48"
+                width="20"
+                height="20"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2.4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M6 28c2-8 8-14 16-15 4-.5 8 0 11 2l4-3 1 6-3 2c2 3 2 7 1 11-1 4-4 7-8 9l-2 4-5-2-6 2-2-4c-4-2-6-6-7-12z" />
+                <circle cx="30" cy="22" r="1.6" fill="currentColor" />
+                <path d="M14 34l-2 6" />
+                <path d="M22 38l-1 6" />
+                <path d="M30 36l2 5" />
+              </svg>
+            </div>
+            <div>
+              <div className="title">GuardeX</div>
+              <div className="sub">the Guardian T-Rex for your repo</div>
+            </div>
           </div>
         </div>
 

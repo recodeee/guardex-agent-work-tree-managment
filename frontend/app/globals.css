@@ -82,6 +82,20 @@ button {
   min-width: 0;
 }
 
+.brand-block {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-divider {
+  width: 1px;
+  height: 28px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
 .top .mark {
   width: 26px;
   height: 26px;
@@ -93,6 +107,24 @@ button {
   font-weight: 700;
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.guardex-mark {
+  background: linear-gradient(135deg, #1F8A5C 0%, #0e4a33 100%);
+  color: #9ce3b2;
+  border: 1px solid rgba(61, 220, 151, 0.35);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.guardex-brand .title {
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+
+.guardex-brand .sub {
+  color: var(--accent);
+  font-style: italic;
+  font-size: 11px;
 }
 
 .top .title {
@@ -474,6 +506,48 @@ button {
   grid-template-columns: 18px 1fr;
   gap: 8px;
   align-items: center;
+}
+
+.t-row.shell {
+  grid-template-columns: 18px 1fr auto;
+}
+
+.t-body {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.t-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 0;
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
+}
+
+.t-copy:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.t-copy.copied {
+  color: var(--accent);
+  background: rgba(61, 220, 151, 0.14);
+  border-color: rgba(61, 220, 151, 0.35);
+}
+
+.t-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .t-ico {
