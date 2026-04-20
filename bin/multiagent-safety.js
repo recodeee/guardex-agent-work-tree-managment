@@ -13,6 +13,7 @@ const LEGACY_NAMES = ['guardex', 'multiagent-safety'];
 const OPENSPEC_PACKAGE = '@fission-ai/openspec';
 const GLOBAL_TOOLCHAIN_PACKAGES = [
   'oh-my-codex',
+  'oh-my-claude',
   OPENSPEC_PACKAGE,
   '@imdeadpool/codex-account-switcher',
 ];
@@ -122,6 +123,7 @@ const GITIGNORE_MARKER_START = '# multiagent-safety:START';
 const GITIGNORE_MARKER_END = '# multiagent-safety:END';
 const MANAGED_GITIGNORE_PATHS = [
   '.omx/',
+  '.omc/',
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
   'scripts/codex-agent.sh',

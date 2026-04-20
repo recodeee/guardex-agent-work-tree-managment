@@ -369,6 +369,7 @@ test('setup provisions workflow files and repo config', () => {
   assert.match(gitignoreContent, /\.githooks\/pre-push/);
   assert.match(gitignoreContent, /\.githooks\/post-merge/);
   assert.match(gitignoreContent, /\.omx\//);
+  assert.match(gitignoreContent, /\.omc\//);
   assert.match(gitignoreContent, /oh-my-codex\//);
   assert.match(gitignoreContent, /\.codex\/skills\/guardex\/SKILL\.md/);
   assert.match(gitignoreContent, /\.codex\/skills\/guardex-merge-skills-to-dev\/SKILL\.md/);

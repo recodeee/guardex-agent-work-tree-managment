@@ -373,6 +373,11 @@ npm pack --dry-run
 
 ## Release notes
 
+### v7.0.5
+
+- **Added: `oh-my-claude` to `gx status` global-toolchain check.** The Claude-side mirror of `oh-my-codex` is now reported alongside the existing services (`oh-my-codex`, `@fission-ai/openspec`, `@imdeadpool/codex-account-switcher`, `gh`). Users who have not yet installed it will see a clear "inactive" line instead of silent omission, matching the existing codex detection contract.
+- **Added: `.omc/` to the managed `.gitignore` block.** `gx setup` / `gx doctor` write a `.omc/` entry next to `.omx/` so Claude-specific runtime state (notepad, worktrees landing there in a follow-up) stays out of commits by default, parity with the existing `.omx/` treatment.
+
 ### v7.0.4
 
 - **Fixed: publish collision on npm.** Advanced the package metadata from `7.0.3` to `7.0.4` so `npm publish` no longer targets an already published version.
