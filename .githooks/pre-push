@@ -28,6 +28,13 @@ if [[ -n "${CODEX_THREAD_ID:-}" || -n "${OMX_SESSION_ID:-}" || "${CODEX_CI:-0}" 
   is_codex_session=1
 fi
 
+# Superset covering Claude Code so only agents are blocked from pushing to
+# protected refs; humans push directly from their primary checkout.
+is_agent_session=$is_codex_session
+if [[ -n "${CLAUDECODE:-}" || -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+  is_agent_session=1
+fi
+
 protected_branches_raw="${GUARDEX_PROTECTED_BRANCHES:-$(git config --get multiagent.protectedBranches || true)}"
 if [[ -z "$protected_branches_raw" ]]; then
   protected_branches_raw="dev main master"
@@ -67,6 +74,11 @@ if [[ "${#blocked_refs[@]}" -gt 0 ]]; then
       echo "  ALLOW_PUSH_ON_PROTECTED_BRANCH=1 git push ..."
     } >&2
     exit 1
+  fi
+
+  # Humans may push directly to protected branches; only agent sessions are blocked.
+  if [[ "$is_agent_session" != "1" ]]; then
+    exit 0
   fi
 
   if [[ "$is_vscode_git_context" == "1" && "$allow_vscode_protected_branch_writes" == "1" ]]; then

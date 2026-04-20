@@ -32,6 +32,10 @@ function runCmd(cmd, args, cwd, options = {}) {
   delete sanitizedEnv.CODEX_THREAD_ID;
   delete sanitizedEnv.OMX_SESSION_ID;
   delete sanitizedEnv.CODEX_CI;
+  // Strip Claude Code session markers too so tests that simulate human users
+  // (no agent env) see a clean environment regardless of the host shell.
+  delete sanitizedEnv.CLAUDECODE;
+  delete sanitizedEnv.CLAUDE_CODE_SESSION_ID;
 
   const overrideEnv = options.env || options;
   const pushBypassEnv =
@@ -2030,7 +2034,7 @@ test('protect command manages configured protected branches', () => {
   assert.match(result.stdout, /reset to defaults/);
 });
 
-test('pre-commit blocks non-codex VS Code commits on custom protected branches by default when branch has remote counterpart', () => {
+test('pre-commit allows human commits on custom protected branches with remote counterpart', () => {
   const repoDir = initRepoOnBranch('release');
   seedCommit(repoDir);
   attachOriginRemoteForBranch(repoDir, 'release');
@@ -2045,11 +2049,10 @@ test('pre-commit blocks non-codex VS Code commits on custom protected branches b
     ALLOW_COMMIT_ON_PROTECTED_BRANCH: '0',
     VSCODE_GIT_IPC_HANDLE: '1',
   });
-  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
-  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
 });
 
-test('pre-commit blocks non-codex protected branch commits from VS Code Source Control env by default', () => {
+test('pre-commit allows human commits on protected branches from VS Code Source Control env by default', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
   attachOriginRemote(repoDir);
@@ -2068,11 +2071,10 @@ test('pre-commit blocks non-codex protected branch commits from VS Code Source C
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
-  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
 });
 
-test('pre-commit blocks non-codex VS Code commits on protected local-only branches by default', () => {
+test('pre-commit allows human commits on protected local-only branches', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
 
@@ -2088,6 +2090,26 @@ test('pre-commit blocks non-codex VS Code commits on protected local-only branch
       VSCODE_GIT_IPC_HANDLE: '1',
       VSCODE_GIT_ASKPASS_NODE: '1',
       VSCODE_IPC_HOOK_CLI: '1',
+    },
+  );
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+});
+
+test('pre-commit blocks Claude Code sessions on protected branches', () => {
+  const repoDir = initRepo();
+  seedCommit(repoDir);
+
+  const setupResult = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+
+  const hookResult = runCmd(
+    'bash',
+    ['.githooks/pre-commit'],
+    repoDir,
+    {
+      ALLOW_COMMIT_ON_PROTECTED_BRANCH: '0',
+      CLAUDECODE: '1',
+      GUARDEX_AUTO_REROUTE_PROTECTED_BRANCH: '0',
     },
   );
   assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
@@ -2117,7 +2139,7 @@ test('pre-commit blocks codex commits on protected local-only branches even from
   assert.match(hookResult.stderr, /\[guardex-preedit-guard\] Codex edit\/commit detected on a protected branch\./);
 });
 
-test('pre-push blocks non-codex protected branch pushes from VS Code Source Control env by default', () => {
+test('pre-push allows human pushes to protected branches from VS Code Source Control env by default', () => {
   const repoDir = initRepoOnBranch('main');
   seedCommit(repoDir);
 
@@ -2137,11 +2159,32 @@ test('pre-push blocks non-codex protected branch pushes from VS Code Source Cont
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
+});
+
+test('pre-push blocks Claude Code sessions pushing to protected branches', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+
+  const setupResult = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(setupResult.status, 0, setupResult.stderr || setupResult.stdout);
+
+  const hookResult = runCmd(
+    'bash',
+    [
+      '-lc',
+      `printf '%s\\n' 'refs/heads/main 1111111111111111111111111111111111111111 refs/heads/main 0000000000000000000000000000000000000000' | .githooks/pre-push origin origin`,
+    ],
+    repoDir,
+    {
+      CLAUDECODE: '1',
+    },
+  );
   assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
   assert.match(hookResult.stderr, /\[agent-branch-guard\] Push to protected branch blocked\./);
 });
 
-test('pre-commit blocks non-codex protected branch commits from VS Code Source Control env when explicitly disabled', () => {
+test('pre-commit allows human commits on protected branches even when VS Code write-opt-in is explicitly disabled', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
   attachOriginRemote(repoDir);
@@ -2167,11 +2210,10 @@ test('pre-commit blocks non-codex protected branch commits from VS Code Source C
       VSCODE_IPC_HOOK_CLI: '1',
     },
   );
-  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
-  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
 });
 
-test('pre-commit does not treat TERM_PROGRAM=vscode as VS Code Source Control context', () => {
+test('pre-commit allows human commits on protected branches under TERM_PROGRAM=vscode', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
   attachOriginRemote(repoDir);
@@ -2195,8 +2237,7 @@ test('pre-commit does not treat TERM_PROGRAM=vscode as VS Code Source Control co
       TERM_PROGRAM: 'vscode',
     },
   );
-  assert.equal(hookResult.status, 1, hookResult.stderr || hookResult.stdout);
-  assert.match(hookResult.stderr, /\[agent-branch-guard\] Direct commits on protected branches are blocked\./);
+  assert.equal(hookResult.status, 0, hookResult.stderr || hookResult.stdout);
 });
 
 test('pre-push allows non-codex protected branch pushes from VS Code Source Control env when explicitly enabled', () => {

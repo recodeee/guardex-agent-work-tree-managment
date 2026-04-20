@@ -29,6 +29,14 @@ if [[ -n "${CODEX_THREAD_ID:-}" || -n "${OMX_SESSION_ID:-}" || "${CODEX_CI:-0}" 
   is_codex_session=1
 fi
 
+# Superset of is_codex_session that also covers Claude Code sessions so the
+# protected-branch gate below only triggers for automated agents — humans stay
+# free to commit directly on main/dev/master.
+is_agent_session=$is_codex_session
+if [[ -n "${CLAUDECODE:-}" || -n "${CLAUDE_CODE_SESSION_ID:-}" ]]; then
+  is_agent_session=1
+fi
+
 is_vscode_git_context=0
 if [[ -n "${VSCODE_GIT_IPC_HANDLE:-}" || -n "${VSCODE_GIT_ASKPASS_NODE:-}" || -n "${VSCODE_IPC_HOOK_CLI:-}" || "${TERM_PROGRAM:-}" == "vscode" ]]; then
   is_vscode_git_context=1
@@ -302,7 +310,9 @@ MSG
 fi
 
 if [[ "$is_protected_branch" == "1" ]]; then
-  if [[ "$is_codex_session" != "1" && "$is_vscode_git_context" == "1" && "$allow_vscode_protected_branch_writes" == "1" ]]; then
+  # Humans may commit directly on protected branches; only agent sessions
+  # (Codex / Claude Code / OMX) are funneled through the block/reroute path.
+  if [[ "$is_agent_session" != "1" ]]; then
     exit 0
   fi
 
