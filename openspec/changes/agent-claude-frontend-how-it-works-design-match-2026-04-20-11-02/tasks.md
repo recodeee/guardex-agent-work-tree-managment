@@ -12,8 +12,8 @@
 
 - [x] 3.1 `npx tsc --noEmit -p .` (passes, no type errors).
 - [x] 3.1.a `npx next build` (compiled successfully, 4/4 static pages, `/` bundle 11.2 kB / 128 kB First Load).
-- [ ] 3.2 Run `openspec validate agent-claude-frontend-how-it-works-design-match-2026-04-20-11-02 --type change --strict` (deferred — no `openspec` CLI available in this env; `agent-branch-finish.sh` gate will run it).
-- [ ] 3.3 Run `openspec validate --specs` (deferred — covered by finish gate).
+- [x] 3.2 Run `openspec validate agent-claude-frontend-how-it-works-design-match-2026-04-20-11-02 --type change --strict` (PASS: `Change ... is valid`).
+- [x] 3.3 Run `openspec validate --specs` (PASS: no items to validate; no top-level specs touched).
 
 ## 4. Collaboration
 
