@@ -1697,6 +1697,10 @@ test('default invocation runs non-mutating status output', () => {
     result.stdout,
     /AGENT BOT\n\s+agents\s+Start\/stop review \+ cleanup bots for this repo/,
   );
+  assert.match(
+    result.stdout,
+    /REPO TOGGLE\n\s+Set repo-root \.env: GUARDEX_ON=0 disables Guardex, GUARDEX_ON=1 enables it again/,
+  );
   assert.equal(fs.existsSync(path.join(repoDir, '.githooks', 'pre-commit')), false);
 });
 

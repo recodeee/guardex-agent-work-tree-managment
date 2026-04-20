@@ -320,10 +320,17 @@ function agentBotCatalogLines(indent = '  ') {
   );
 }
 
+function repoToggleLines(indent = '  ') {
+  return [
+    `${indent}Set repo-root .env: ${GUARDEX_REPO_TOGGLE_ENV}=0 disables Guardex, ${GUARDEX_REPO_TOGGLE_ENV}=1 enables it again`,
+  ];
+}
+
 function printToolLogsSummary() {
   const usageLine = `    $ ${SHORT_TOOL_NAME} <command> [options]`;
   const commandDetails = commandCatalogLines('    ');
   const agentBotDetails = agentBotCatalogLines('    ');
+  const repoToggleDetails = repoToggleLines('    ');
 
   if (!supportsAnsiColors()) {
     console.log(`${TOOL_NAME}-tools logs:`);
@@ -337,6 +344,10 @@ function printToolLogsSummary() {
     for (const line of agentBotDetails) {
       console.log(line);
     }
+    console.log('  REPO TOGGLE');
+    for (const line of repoToggleDetails) {
+      console.log(line);
+    }
     return;
   }
 
@@ -344,6 +355,7 @@ function printToolLogsSummary() {
   const usageHeader = colorize('USAGE', '1');
   const commandsHeader = colorize('COMMANDS', '1');
   const agentBotHeader = colorize('AGENT BOT', '1');
+  const repoToggleHeader = colorize('REPO TOGGLE', '1');
   const pipe = colorize('│', '90');
   const tee = colorize('├', '90');
   const corner = colorize('└', '90');
@@ -361,6 +373,14 @@ function printToolLogsSummary() {
   }
   console.log(`  ${tee}─ ${agentBotHeader}`);
   for (const line of agentBotDetails) {
+    if (!line) {
+      console.log(`  ${pipe}`);
+      continue;
+    }
+    console.log(`  ${pipe}${line.slice(2)}`);
+  }
+  console.log(`  ${tee}─ ${repoToggleHeader}`);
+  for (const line of repoToggleDetails) {
     if (!line) {
       console.log(`  ${pipe}`);
       continue;
@@ -386,6 +406,9 @@ ${commandCatalogLines().join('\n')}
 
 AGENT BOT
 ${agentBotCatalogLines().join('\n')}
+
+REPO TOGGLE
+${repoToggleLines().join('\n')}
 
 NOTES
   - No command = ${SHORT_TOOL_NAME} status. ${SHORT_TOOL_NAME} init is an alias of ${SHORT_TOOL_NAME} setup.
