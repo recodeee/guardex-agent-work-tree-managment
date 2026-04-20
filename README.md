@@ -373,6 +373,11 @@ npm pack --dry-run
 
 ## Release notes
 
+### v7.0.4
+
+- **Fixed: publish collision on npm.** Advanced the package metadata from `7.0.3` to `7.0.4` so `npm publish` no longer targets an already published version.
+- **Changed: release-note sync for versioning rule.** Added this versioned entry in README in the same change as the package bump to keep publish metadata and release notes aligned.
+
 ### v7.0.3
 
 - **Branch/worktree naming refactor.** `agent-branch-start.sh` now produces `agent/<role>/<task>-<YYYY-MM-DD>-<HH-MM>` instead of `agent/<role+account-email>/<snapshot-slug>-<task>-<cksum6>`. Codex account names (e.g. `Zeus Edix Hu`) and 6-hex checksums no longer leak into branch or worktree paths.
