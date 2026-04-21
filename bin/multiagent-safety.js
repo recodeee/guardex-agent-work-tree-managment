@@ -5,11 +5,18 @@ const os = require('node:os');
 const path = require('node:path');
 const cp = require('node:child_process');
 
-const packageJsonPath = path.resolve(__dirname, '..', 'package.json');
+const PACKAGE_ROOT = path.resolve(__dirname, '..');
+const packageJsonPath = path.join(PACKAGE_ROOT, 'package.json');
 const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
 
 const TOOL_NAME = 'gitguardex';
 const SHORT_TOOL_NAME = 'gx';
+if (!process.env.GUARDEX_CLI_ENTRY) {
+  process.env.GUARDEX_CLI_ENTRY = __filename;
+}
+if (!process.env.GUARDEX_NODE_BIN) {
+  process.env.GUARDEX_NODE_BIN = process.execPath;
+}
 const LEGACY_NAMES = ['guardex', 'multiagent-safety'];
 const GLOBAL_INSTALL_COMMAND = `npm i -g ${packageJson.name}`;
 const OPENSPEC_PACKAGE = '@fission-ai/openspec';
@@ -85,9 +92,36 @@ const COMPOSE_HINT_FILES = [
   'compose.yaml',
 ];
 
-const TEMPLATE_ROOT = path.resolve(__dirname, '..', 'templates');
+const TEMPLATE_ROOT = path.join(PACKAGE_ROOT, 'templates');
+
+const HOOK_NAMES = ['pre-commit', 'pre-push', 'post-merge', 'post-checkout'];
 
 const TEMPLATE_FILES = [
+  'scripts/agent-session-state.js',
+  'scripts/guardex-docker-loader.sh',
+  'scripts/guardex-env.sh',
+  'scripts/install-vscode-active-agents-extension.js',
+  'github/pull.yml.example',
+  'github/workflows/cr.yml',
+  'vscode/guardex-active-agents/package.json',
+  'vscode/guardex-active-agents/extension.js',
+  'vscode/guardex-active-agents/session-schema.js',
+  'vscode/guardex-active-agents/README.md',
+];
+
+const SCRIPT_SHIMS = [
+  { relativePath: 'scripts/agent-branch-start.sh', kind: 'shell', command: ['branch', 'start'] },
+  { relativePath: 'scripts/agent-branch-finish.sh', kind: 'shell', command: ['branch', 'finish'] },
+  { relativePath: 'scripts/agent-branch-merge.sh', kind: 'shell', command: ['branch', 'merge'] },
+  { relativePath: 'scripts/codex-agent.sh', kind: 'shell', command: ['internal', 'run-shell', 'codexAgent'] },
+  { relativePath: 'scripts/review-bot-watch.sh', kind: 'shell', command: ['internal', 'run-shell', 'reviewBot'] },
+  { relativePath: 'scripts/agent-worktree-prune.sh', kind: 'shell', command: ['worktree', 'prune'] },
+  { relativePath: 'scripts/agent-file-locks.py', kind: 'python', command: ['locks'] },
+  { relativePath: 'scripts/openspec/init-plan-workspace.sh', kind: 'shell', command: ['internal', 'run-shell', 'planInit'] },
+  { relativePath: 'scripts/openspec/init-change-workspace.sh', kind: 'shell', command: ['internal', 'run-shell', 'changeInit'] },
+];
+
+const LEGACY_MANAGED_REPO_FILES = [
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
   'scripts/agent-branch-merge.sh',
@@ -102,37 +136,23 @@ const TEMPLATE_FILES = [
   'scripts/install-agent-git-hooks.sh',
   'scripts/openspec/init-plan-workspace.sh',
   'scripts/openspec/init-change-workspace.sh',
-  'githooks/pre-commit',
-  'githooks/pre-push',
-  'githooks/post-merge',
-  'githooks/post-checkout',
-  'codex/skills/gitguardex/SKILL.md',
-  'codex/skills/guardex-merge-skills-to-dev/SKILL.md',
-  'claude/commands/gitguardex.md',
-  'github/pull.yml.example',
-  'github/workflows/cr.yml',
-  'vscode/guardex-active-agents/package.json',
-  'vscode/guardex-active-agents/extension.js',
-  'vscode/guardex-active-agents/session-schema.js',
-  'vscode/guardex-active-agents/README.md',
+  '.githooks/pre-commit',
+  '.githooks/pre-push',
+  '.githooks/post-merge',
+  '.githooks/post-checkout',
+  '.codex/skills/gitguardex/SKILL.md',
+  '.codex/skills/guardex-merge-skills-to-dev/SKILL.md',
+  '.claude/commands/gitguardex.md',
 ];
 
 const REQUIRED_WORKFLOW_FILES = [
-  'scripts/agent-branch-start.sh',
-  'scripts/agent-branch-finish.sh',
-  'scripts/agent-branch-merge.sh',
-  'scripts/agent-session-state.js',
-  'scripts/guardex-docker-loader.sh',
-  'scripts/agent-worktree-prune.sh',
-  'scripts/agent-file-locks.py',
-  'scripts/guardex-env.sh',
-  'scripts/install-agent-git-hooks.sh',
-  '.githooks/pre-commit',
-  '.githooks/post-merge',
+  ...TEMPLATE_FILES.map((entry) => toDestinationPath(entry)),
+  ...SCRIPT_SHIMS.map((entry) => entry.relativePath),
+  ...HOOK_NAMES.map((entry) => path.posix.join('.githooks', entry)),
   '.omx/state/agent-file-locks.json',
 ];
 
-const REQUIRED_PACKAGE_SCRIPTS = {
+const LEGACY_MANAGED_PACKAGE_SCRIPTS = {
   'agent:codex': 'bash ./scripts/codex-agent.sh',
   'agent:branch:start': 'bash ./scripts/agent-branch-start.sh',
   'agent:branch:finish': 'bash ./scripts/agent-branch-finish.sh',
@@ -157,32 +177,44 @@ const REQUIRED_PACKAGE_SCRIPTS = {
   'agent:finish': 'gx finish --all',
 };
 
+const PACKAGE_SCRIPT_ASSETS = {
+  branchStart: path.join(TEMPLATE_ROOT, 'scripts', 'agent-branch-start.sh'),
+  branchFinish: path.join(TEMPLATE_ROOT, 'scripts', 'agent-branch-finish.sh'),
+  branchMerge: path.join(TEMPLATE_ROOT, 'scripts', 'agent-branch-merge.sh'),
+  codexAgent: path.join(TEMPLATE_ROOT, 'scripts', 'codex-agent.sh'),
+  reviewBot: path.join(TEMPLATE_ROOT, 'scripts', 'review-bot-watch.sh'),
+  worktreePrune: path.join(TEMPLATE_ROOT, 'scripts', 'agent-worktree-prune.sh'),
+  lockTool: path.join(TEMPLATE_ROOT, 'scripts', 'agent-file-locks.py'),
+  planInit: path.join(TEMPLATE_ROOT, 'scripts', 'openspec', 'init-plan-workspace.sh'),
+  changeInit: path.join(TEMPLATE_ROOT, 'scripts', 'openspec', 'init-change-workspace.sh'),
+};
+
+const USER_LEVEL_SKILL_ASSETS = [
+  {
+    source: path.join(TEMPLATE_ROOT, 'codex', 'skills', 'gitguardex', 'SKILL.md'),
+    destination: path.join('.codex', 'skills', 'gitguardex', 'SKILL.md'),
+  },
+  {
+    source: path.join(TEMPLATE_ROOT, 'codex', 'skills', 'guardex-merge-skills-to-dev', 'SKILL.md'),
+    destination: path.join('.codex', 'skills', 'guardex-merge-skills-to-dev', 'SKILL.md'),
+  },
+  {
+    source: path.join(TEMPLATE_ROOT, 'claude', 'commands', 'gitguardex.md'),
+    destination: path.join('.claude', 'commands', 'gitguardex.md'),
+  },
+];
+
 const EXECUTABLE_RELATIVE_PATHS = new Set([
-  'scripts/agent-branch-start.sh',
-  'scripts/agent-branch-finish.sh',
-  'scripts/agent-branch-merge.sh',
   'scripts/agent-session-state.js',
-  'scripts/codex-agent.sh',
   'scripts/guardex-docker-loader.sh',
   'scripts/install-vscode-active-agents-extension.js',
-  'scripts/review-bot-watch.sh',
-  'scripts/agent-worktree-prune.sh',
-  'scripts/agent-file-locks.py',
-  'scripts/install-agent-git-hooks.sh',
-  'scripts/openspec/init-plan-workspace.sh',
-  'scripts/openspec/init-change-workspace.sh',
-  '.githooks/pre-commit',
-  '.githooks/pre-push',
-  '.githooks/post-merge',
-  '.githooks/post-checkout',
+  ...SCRIPT_SHIMS.map((entry) => entry.relativePath),
+  ...HOOK_NAMES.map((entry) => path.posix.join('.githooks', entry)),
 ]);
 
 const CRITICAL_GUARDRAIL_PATHS = new Set([
   'AGENTS.md',
-  '.githooks/pre-commit',
-  '.githooks/pre-push',
-  '.githooks/post-merge',
-  '.githooks/post-checkout',
+  ...HOOK_NAMES.map((entry) => path.posix.join('.githooks', entry)),
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
   'scripts/agent-branch-merge.sh',
@@ -212,9 +244,6 @@ const MANAGED_GITIGNORE_PATHS = [
   'scripts/agent-file-locks.py',
   '.githooks',
   'oh-my-codex/',
-  '.codex/skills/gitguardex/SKILL.md',
-  '.codex/skills/guardex-merge-skills-to-dev/SKILL.md',
-  '.claude/commands/gitguardex.md',
   LOCK_FILE_RELATIVE,
 ];
 const REPO_SCAFFOLD_DIRECTORIES = ['bin'];
@@ -247,6 +276,12 @@ const SUGGESTIBLE_COMMANDS = [
   'status',
   'setup',
   'doctor',
+  'branch',
+  'locks',
+  'worktree',
+  'hook',
+  'migrate',
+  'install-agent-skills',
   'agents',
   'merge',
   'finish',
@@ -272,6 +307,12 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['status', 'Show GitGuardex CLI + service health without modifying files'],
   ['setup', 'Install, repair, and verify guardrails (flags: --repair, --install-only, --target)'],
   ['doctor', 'Repair drift + verify (auto-sandboxes on protected main)'],
+  ['branch', 'CLI-owned branch workflow surface (start/finish/merge)'],
+  ['locks', 'CLI-owned file lock surface (claim/allow-delete/release/status/validate)'],
+  ['worktree', 'CLI-owned worktree cleanup surface (prune)'],
+  ['hook', 'Hook dispatch/install surface used by managed shims'],
+  ['migrate', 'Convert legacy repo-local installs to the new shim-based CLI-owned surface'],
+  ['install-agent-skills', 'Install Guardex Codex/Claude skills into the user home'],
   ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
   ['merge', 'Create/reuse an integration lane and merge overlapping agent branches'],
   ['sync', 'Sync agent branches with origin/<base>'],
@@ -319,8 +360,8 @@ const AI_SETUP_PROMPT = `GitGuardex (gx) setup checklist for Codex/Claude in thi
 1) Install:    ${GLOBAL_INSTALL_COMMAND} && gh --version
 2) Bootstrap:  gx setup
 3) Repair:     gx doctor
-4) Task loop:  bash scripts/codex-agent.sh "<task>" "<agent>"
-               or branch-start -> python3 scripts/agent-file-locks.py claim -> branch-finish
+4) Task loop:  gx branch start "<task>" "<agent>"
+               then gx locks claim --branch "<agent-branch>" <file...> -> gx branch finish
 5) Integrate:  gx merge --branch <agent-a> --branch <agent-b>
 6) Finish:     gx finish --all
 7) Cleanup:    gx cleanup
@@ -335,8 +376,8 @@ const AI_SETUP_COMMANDS = `${GLOBAL_INSTALL_COMMAND}
 gh --version
 gx setup
 gx doctor
-bash scripts/codex-agent.sh "<task>" "<agent>"
-python3 scripts/agent-file-locks.py claim --branch "<agent-branch>" <file...>
+gx branch start "<task>" "<agent>"
+gx locks claim --branch "<agent-branch>" <file...>
 gx merge --branch "<agent-a>" --branch "<agent-b>"
 gx finish --all
 gx cleanup
@@ -582,8 +623,72 @@ function run(cmd, args, options = {}) {
     encoding: 'utf8',
     stdio: options.stdio || 'pipe',
     cwd: options.cwd,
+    env: options.env ? { ...process.env, ...options.env } : process.env,
     timeout: options.timeout,
   });
+}
+
+function extractTargetedArgs(rawArgs, defaultTarget = process.cwd()) {
+  const passthrough = [];
+  let target = defaultTarget;
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--target' || arg === '-t') {
+      target = requireValue(rawArgs, index, '--target');
+      index += 1;
+      continue;
+    }
+    passthrough.push(arg);
+  }
+
+  return { target, passthrough };
+}
+
+function packageAssetEnv(extraEnv = {}) {
+  return {
+    GUARDEX_CLI_ENTRY: __filename,
+    GUARDEX_NODE_BIN: process.execPath,
+    ...extraEnv,
+  };
+}
+
+function packageAssetPath(assetKey) {
+  const assetPath = PACKAGE_SCRIPT_ASSETS[assetKey];
+  if (!assetPath) {
+    throw new Error(`Unknown package asset: ${assetKey}`);
+  }
+  if (!fs.existsSync(assetPath)) {
+    throw new Error(`Missing package asset: ${assetPath}`);
+  }
+  return assetPath;
+}
+
+function runPackageAsset(assetKey, rawArgs, options = {}) {
+  const assetPath = packageAssetPath(assetKey);
+  let cmd = 'bash';
+  if (assetPath.endsWith('.py')) {
+    cmd = 'python3';
+  } else if (assetPath.endsWith('.js')) {
+    cmd = process.execPath;
+  }
+  return run(cmd, [assetPath, ...rawArgs], {
+    cwd: options.cwd || process.cwd(),
+    stdio: options.stdio || 'pipe',
+    timeout: options.timeout,
+    env: packageAssetEnv(options.env),
+  });
+}
+
+function invokePackageAsset(assetKey, rawArgs, options = {}) {
+  const result = runPackageAsset(assetKey, rawArgs, options);
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.status !== 0) {
+    throw new Error(`${assetKey} command failed with status ${result.status}`);
+  }
+  process.exitCode = 0;
+  return result;
 }
 
 function formatElapsedDuration(ms) {
@@ -864,6 +969,111 @@ function isCriticalGuardrailPath(relativePath) {
   return CRITICAL_GUARDRAIL_PATHS.has(relativePath);
 }
 
+function shellSingleQuote(value) {
+  return `'${String(value).replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function renderShellDispatchShim(commandParts) {
+  const rendered = commandParts.map((part) => shellSingleQuote(part)).join(' ');
+  return (
+    '#!/usr/bin/env bash\n' +
+    'set -euo pipefail\n' +
+    '\n' +
+    'if [[ -n "${GUARDEX_CLI_ENTRY:-}" ]]; then\n' +
+    '  node_bin="${GUARDEX_NODE_BIN:-node}"\n' +
+    `  exec "$node_bin" "$GUARDEX_CLI_ENTRY" ${rendered} "$@"\n` +
+    'fi\n' +
+    '\n' +
+    'resolve_guardex_cli() {\n' +
+    '  if [[ -n "${GUARDEX_CLI_BIN:-}" ]]; then\n' +
+    '    printf \'%s\' "$GUARDEX_CLI_BIN"\n' +
+    '    return 0\n' +
+    '  fi\n' +
+    '  if command -v gx >/dev/null 2>&1; then\n' +
+    '    printf \'%s\' "gx"\n' +
+    '    return 0\n' +
+    '  fi\n' +
+    '  if command -v gitguardex >/dev/null 2>&1; then\n' +
+    '    printf \'%s\' "gitguardex"\n' +
+    '    return 0\n' +
+    '  fi\n' +
+    '  echo "[gitguardex-shim] Missing gx CLI in PATH." >&2\n' +
+    '  exit 1\n' +
+    '}\n' +
+    '\n' +
+    'cli_bin="$(resolve_guardex_cli)"\n' +
+    `exec "$cli_bin" ${rendered} "$@"\n`
+  );
+}
+
+function renderPythonDispatchShim(commandParts) {
+  return (
+    '#!/usr/bin/env python3\n' +
+    'import os\n' +
+    'import shutil\n' +
+    'import subprocess\n' +
+    'import sys\n' +
+    '\n' +
+    `COMMAND = ${JSON.stringify(commandParts)}\n` +
+    '\n' +
+    'entry = os.environ.get("GUARDEX_CLI_ENTRY")\n' +
+    'if entry:\n' +
+    '    node_bin = os.environ.get("GUARDEX_NODE_BIN") or shutil.which("node") or "node"\n' +
+    '    raise SystemExit(subprocess.call([node_bin, entry, *COMMAND, *sys.argv[1:]]))\n' +
+    'cli = os.environ.get("GUARDEX_CLI_BIN") or shutil.which("gx") or shutil.which("gitguardex")\n' +
+    'if not cli:\n' +
+    '    sys.stderr.write("[gitguardex-shim] Missing gx CLI in PATH.\\n")\n' +
+    '    raise SystemExit(1)\n' +
+    'raise SystemExit(subprocess.call([cli, *COMMAND, *sys.argv[1:]]))\n'
+  );
+}
+
+function renderManagedFile(repoRoot, relativePath, content, options = {}) {
+  const destinationPath = path.join(repoRoot, relativePath);
+  const destinationExists = fs.existsSync(destinationPath);
+  const force = Boolean(options.force);
+  const dryRun = Boolean(options.dryRun);
+
+  if (destinationExists) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === content) {
+      ensureExecutable(destinationPath, relativePath, dryRun);
+      return { status: 'unchanged', file: relativePath };
+    }
+    if (!force && !isCriticalGuardrailPath(relativePath)) {
+      throw new Error(`Refusing to overwrite existing file without --force: ${relativePath}`);
+    }
+  }
+
+  ensureParentDir(repoRoot, destinationPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(destinationPath, content, 'utf8');
+    ensureExecutable(destinationPath, relativePath, dryRun);
+  }
+
+  if (destinationExists && !force && isCriticalGuardrailPath(relativePath)) {
+    return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: relativePath };
+  }
+
+  return { status: destinationExists ? 'overwritten' : 'created', file: relativePath };
+}
+
+function ensureGeneratedScriptShim(repoRoot, spec, options = {}) {
+  const content = spec.kind === 'python'
+    ? renderPythonDispatchShim(spec.command)
+    : renderShellDispatchShim(spec.command);
+  return renderManagedFile(repoRoot, spec.relativePath, content, options);
+}
+
+function ensureHookShim(repoRoot, hookName, options = {}) {
+  return renderManagedFile(
+    repoRoot,
+    path.posix.join('.githooks', hookName),
+    renderShellDispatchShim(['hook', 'run', hookName]),
+    options,
+  );
+}
+
 function copyTemplateFile(repoRoot, relativeTemplatePath, force, dryRun) {
   const sourcePath = path.join(TEMPLATE_ROOT, relativeTemplatePath);
   const destinationRelativePath = toDestinationPath(relativeTemplatePath);
@@ -1041,8 +1251,7 @@ function writeLockState(repoRoot, payload, dryRun) {
   fs.writeFileSync(lockPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
 }
 
-function ensurePackageScripts(repoRoot, dryRun, options = {}) {
-  const force = Boolean(options.force);
+function removeLegacyPackageScripts(repoRoot, dryRun) {
   const packagePath = path.join(repoRoot, 'package.json');
   if (!fs.existsSync(packagePath)) {
     return { status: 'skipped', file: 'package.json', note: 'package.json not found' };
@@ -1058,29 +1267,87 @@ function ensurePackageScripts(repoRoot, dryRun, options = {}) {
   const existingScripts = pkg.scripts && typeof pkg.scripts === 'object'
     ? pkg.scripts
     : {};
-  const hasExistingAgentScripts = Object.keys(existingScripts).some((key) => key.startsWith('agent:'));
-  if (hasExistingAgentScripts && !force) {
-    return { status: 'unchanged', file: 'package.json', note: 'preserved existing agent:* scripts' };
-  }
-
   pkg.scripts = existingScripts;
   let changed = false;
-  for (const [key, value] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
-    if (pkg.scripts[key] !== value) {
-      pkg.scripts[key] = value;
+  for (const [key, value] of Object.entries(LEGACY_MANAGED_PACKAGE_SCRIPTS)) {
+    if (existingScripts[key] === value) {
+      delete existingScripts[key];
       changed = true;
     }
   }
 
   if (!changed) {
-    return { status: 'unchanged', file: 'package.json' };
+    return { status: 'unchanged', file: 'package.json', note: 'no Guardex-managed agent:* scripts found' };
   }
 
   if (!dryRun) {
     fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
   }
 
-  return { status: 'updated', file: 'package.json' };
+  return { status: dryRun ? 'would-update' : 'updated', file: 'package.json', note: 'removed Guardex-managed agent:* scripts' };
+}
+
+function installUserLevelAsset(asset, options = {}) {
+  const dryRun = Boolean(options.dryRun);
+  const force = Boolean(options.force);
+  const destinationPath = path.join(GUARDEX_HOME_DIR, asset.destination);
+  const sourceContent = fs.readFileSync(asset.source, 'utf8');
+  const destinationExists = fs.existsSync(destinationPath);
+
+  if (destinationExists) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === sourceContent) {
+      return { status: 'unchanged', file: asset.destination };
+    }
+    if (!force) {
+      return { status: 'skipped-conflict', file: asset.destination };
+    }
+  }
+
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
+  }
+  return { status: destinationExists ? (dryRun ? 'would-update' : 'updated') : 'created', file: asset.destination };
+}
+
+function removeLegacyManagedRepoFile(repoRoot, relativePath, options = {}) {
+  const dryRun = Boolean(options.dryRun);
+  const force = Boolean(options.force);
+  const absolutePath = path.join(repoRoot, relativePath);
+  if (!fs.existsSync(absolutePath)) {
+    return { status: 'unchanged', file: relativePath, note: 'not present' };
+  }
+  if (!fs.statSync(absolutePath).isFile()) {
+    return { status: 'skipped-conflict', file: relativePath, note: 'not a regular file' };
+  }
+
+  const skillAsset = USER_LEVEL_SKILL_ASSETS.find((asset) => asset.destination === relativePath);
+  if (skillAsset) {
+    const userLevelPath = path.join(GUARDEX_HOME_DIR, skillAsset.destination);
+    if (!fs.existsSync(userLevelPath)) {
+      return { status: 'skipped', file: relativePath, note: 'user-level replacement not installed' };
+    }
+  }
+
+  const templateRelative = skillAsset
+    ? skillAsset.source.slice(TEMPLATE_ROOT.length + 1)
+    : relativePath.replace(/^\./, '');
+  const sourcePath = path.join(TEMPLATE_ROOT, templateRelative);
+  if (!fs.existsSync(sourcePath)) {
+    return { status: 'skipped', file: relativePath, note: 'template source missing' };
+  }
+
+  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+  const existingContent = fs.readFileSync(absolutePath, 'utf8');
+  if (existingContent !== sourceContent && !force) {
+    return { status: 'skipped-conflict', file: relativePath, note: 'local edits differ from managed template' };
+  }
+
+  if (!dryRun) {
+    fs.rmSync(absolutePath, { force: true });
+  }
+  return { status: dryRun ? 'would-remove' : 'removed', file: relativePath };
 }
 
 function ensureAgentsSnippet(repoRoot, dryRun, options = {}) {
@@ -1446,7 +1713,7 @@ function assertProtectedMainWriteAllowed(options, commandName) {
   throw new Error(
     `${commandName} blocked on protected branch '${blocked.branch}' in an initialized repo.\n` +
     `Keep local '${blocked.branch}' pull-only: start an agent branch/worktree first:\n` +
-    `  bash scripts/agent-branch-start.sh "<task>" "codex"\n` +
+    `  gx branch start "<task>" "codex"\n` +
     `Override once only when intentional: --allow-protected-base-write`,
   );
 }
@@ -1672,8 +1939,7 @@ function startProtectedBaseSandbox(blocked, { taskName, sandboxSuffix }) {
     return startProtectedBaseSandboxFallback(blocked, sandboxSuffix);
   }
 
-  const startResult = run('bash', [
-    startScript,
+  const startResult = runPackageAsset('branchStart', [
     '--task',
     taskName,
     '--agent',
@@ -1822,8 +2088,7 @@ function collectWorktreeDirtyPaths(worktreePath) {
 }
 
 function collectDoctorForceAddPaths(worktreePath) {
-  return TEMPLATE_FILES
-    .map((entry) => toDestinationPath(entry))
+  return REQUIRED_WORKFLOW_FILES
     .filter((relativePath) => relativePath.startsWith('scripts/') || relativePath.startsWith('.githooks/'))
     .filter((relativePath) => fs.existsSync(path.join(worktreePath, relativePath)));
 }
@@ -1875,13 +2140,13 @@ function claimDoctorChangedLocks(metadata) {
   ]));
   const deletedPaths = collectDoctorDeletedPaths(metadata.worktreePath);
   if (changedPaths.length > 0) {
-    run('python3', [lockScript, 'claim', '--branch', metadata.branch, ...changedPaths], {
+    runPackageAsset('lockTool', ['claim', '--branch', metadata.branch, ...changedPaths], {
       cwd: metadata.worktreePath,
       timeout: 30_000,
     });
   }
   if (deletedPaths.length > 0) {
-    run('python3', [lockScript, 'allow-delete', '--branch', metadata.branch, ...deletedPaths], {
+    runPackageAsset('lockTool', ['allow-delete', '--branch', metadata.branch, ...deletedPaths], {
       cwd: metadata.worktreePath,
       timeout: 30_000,
     });
@@ -2027,7 +2292,7 @@ function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
 
   const finishResult = run(
     'bash',
-    [finishScript, '--branch', metadata.branch, '--base', blocked.branch, '--via-pr', waitForMergeArg],
+    [finishScript, '--branch', metadata.branch, '--base', blocked.branch, '--via-pr', waitForMergeArg, '--cleanup'],
     { cwd: metadata.worktreePath, timeout: finishTimeoutMs },
   );
   if (isSpawnFailure(finishResult)) {
@@ -2098,7 +2363,7 @@ function mergeDoctorSandboxRepairsBackToProtectedBase(options, blocked, metadata
     ...(autoCommitResult.stagedFiles || []),
     ...OMX_SCAFFOLD_DIRECTORIES,
     ...Array.from(OMX_SCAFFOLD_FILES.keys()),
-    ...TEMPLATE_FILES.map((entry) => toDestinationPath(entry)),
+    ...REQUIRED_WORKFLOW_FILES,
     'bin',
     'package.json',
     '.gitignore',
@@ -2236,9 +2501,7 @@ function mergeDoctorSandboxRepairsBackToProtectedBase(options, blocked, metadata
 }
 
 function syncDoctorLocalSupportFiles(repoRoot, dryRun) {
-  return TEMPLATE_FILES
-    .filter((entry) => entry.startsWith('codex/') || entry.startsWith('claude/'))
-    .map((entry) => ensureTemplateFilePresent(repoRoot, entry, dryRun));
+  return [];
 }
 
 function runDoctorInSandbox(options, blocked) {
@@ -3196,7 +3459,6 @@ function autoFinishReadyAgentBranches(repoRoot, options = {}) {
 
     summary.attempted += 1;
     const finishArgs = [
-      finishScript,
       '--branch',
       branch,
       '--base',
@@ -3205,7 +3467,7 @@ function autoFinishReadyAgentBranches(repoRoot, options = {}) {
       waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
       '--cleanup',
     ];
-    const finishResult = run('bash', finishArgs, { cwd: repoRoot });
+    const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot });
     const combinedOutput = [finishResult.stdout || '', finishResult.stderr || ''].join('\n').trim();
 
     if (finishResult.status === 0) {
@@ -3358,9 +3620,9 @@ function printSetupRepoHints(repoRoot, baseBranch, repoLabel = '') {
     console.log(`[${TOOL_NAME}] Bootstrap commit${label}: git add . && git commit -m "bootstrap gitguardex"`);
     console.log(
       `[${TOOL_NAME}] First agent flow${label}: ` +
-      `bash scripts/agent-branch-start.sh "<task>" "codex" -> ` +
-      `python3 scripts/agent-file-locks.py claim --branch "$(git branch --show-current)" <file...> -> ` +
-      `bash scripts/agent-branch-finish.sh --branch "$(git branch --show-current)" --base ${baseBranch} --via-pr --wait-for-merge`,
+      `gx branch start "<task>" "codex" -> ` +
+      `gx locks claim --branch "$(git branch --show-current)" <file...> -> ` +
+      `gx branch finish --branch "$(git branch --show-current)" --base ${baseBranch} --via-pr --wait-for-merge`,
     );
   }
   if (!hasOrigin) {
@@ -3708,19 +3970,20 @@ function parseMergeArgs(rawArgs) {
   return options;
 }
 
-function parseFinishArgs(rawArgs) {
+function parseFinishArgs(rawArgs, defaults = {}) {
   const options = {
     target: process.cwd(),
     base: '',
     branch: '',
     all: false,
     dryRun: false,
-    waitForMerge: true,
-    cleanup: true,
+    waitForMerge: defaults.waitForMerge ?? true,
+    cleanup: defaults.cleanup ?? true,
     keepRemote: false,
     noAutoCommit: false,
     failFast: false,
     commitMessage: '',
+    mergeMode: defaults.mergeMode || 'pr',
   };
 
   for (let index = 0; index < rawArgs.length; index += 1) {
@@ -3775,6 +4038,26 @@ function parseFinishArgs(rawArgs) {
     }
     if (arg === '--no-wait-for-merge') {
       options.waitForMerge = false;
+      continue;
+    }
+    if (arg === '--via-pr') {
+      options.mergeMode = 'pr';
+      continue;
+    }
+    if (arg === '--direct-only') {
+      options.mergeMode = 'direct';
+      continue;
+    }
+    if (arg === '--mode') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--mode requires a value');
+      }
+      if (!['auto', 'direct', 'pr'].includes(next)) {
+        throw new Error(`Invalid --mode value: ${next} (expected auto|direct|pr)`);
+      }
+      options.mergeMode = next;
+      index += 1;
       continue;
     }
     if (arg === '--cleanup') {
@@ -3941,7 +4224,7 @@ function claimLocksForAutoCommit(repoRoot, worktreePath, branch) {
   ]);
 
   if (changedFiles.length > 0) {
-    const claim = run('python3', [lockScript, 'claim', '--branch', branch, ...changedFiles], {
+    const claim = runPackageAsset('lockTool', ['claim', '--branch', branch, ...changedFiles], {
       cwd: repoRoot,
       stdio: 'pipe',
     });
@@ -3975,7 +4258,7 @@ function claimLocksForAutoCommit(repoRoot, worktreePath, branch) {
   ]);
 
   if (deletedFiles.length > 0) {
-    const allowDelete = run('python3', [lockScript, 'allow-delete', '--branch', branch, ...deletedFiles], {
+    const allowDelete = runPackageAsset('lockTool', ['allow-delete', '--branch', branch, ...deletedFiles], {
       cwd: repoRoot,
       stdio: 'pipe',
     });
@@ -4753,6 +5036,16 @@ function askGlobalInstallForMissing(options, missingPackages, missingLocalTools)
 }
 
 function installGlobalToolchain(options) {
+  const approval = resolveGlobalInstallApproval(options);
+  if (approval.source === 'flag' && !approval.approved) {
+    return {
+      status: 'skipped',
+      reason: approval.source,
+      missingPackages: [],
+      missingLocalTools: [],
+    };
+  }
+
   if (options.dryRun) {
     return { status: 'dry-run-skip' };
   }
@@ -4781,11 +5074,11 @@ function installGlobalToolchain(options) {
 
   const missingPackages = detection.ok ? detection.missing : [...GLOBAL_TOOLCHAIN_PACKAGES];
   const missingLocalTools = localCompanionTools.filter((tool) => tool.status !== 'active');
-  const approval = askGlobalInstallForMissing(options, missingPackages, missingLocalTools);
-  if (!approval.approved) {
+  const installApproval = askGlobalInstallForMissing(options, missingPackages, missingLocalTools);
+  if (!installApproval.approved) {
     return {
       status: 'skipped',
-      reason: approval.source,
+      reason: installApproval.source,
       missingPackages,
       missingLocalTools,
     };
@@ -4880,12 +5173,14 @@ function runInstallInternal(options) {
   for (const templateFile of TEMPLATE_FILES) {
     operations.push(copyTemplateFile(repoRoot, templateFile, Boolean(options.force), Boolean(options.dryRun)));
   }
+  for (const shim of SCRIPT_SHIMS) {
+    operations.push(ensureGeneratedScriptShim(repoRoot, shim, options));
+  }
+  for (const hookName of HOOK_NAMES) {
+    operations.push(ensureHookShim(repoRoot, hookName, options));
+  }
 
   operations.push(ensureLockRegistry(repoRoot, Boolean(options.dryRun)));
-
-  if (!options.skipPackageJson) {
-    operations.push(ensurePackageScripts(repoRoot, Boolean(options.dryRun), { force: Boolean(options.force) }));
-  }
 
   if (!options.skipAgents) {
     operations.push(ensureAgentsSnippet(repoRoot, Boolean(options.dryRun), { force: Boolean(options.force) }));
@@ -4925,6 +5220,12 @@ function runFixInternal(options) {
   for (const templateFile of TEMPLATE_FILES) {
     operations.push(ensureTemplateFilePresent(repoRoot, templateFile, Boolean(options.dryRun)));
   }
+  for (const shim of SCRIPT_SHIMS) {
+    operations.push(ensureGeneratedScriptShim(repoRoot, shim, options));
+  }
+  for (const hookName of HOOK_NAMES) {
+    operations.push(ensureHookShim(repoRoot, hookName, options));
+  }
 
   operations.push(ensureLockRegistry(repoRoot, Boolean(options.dryRun)));
 
@@ -4952,10 +5253,6 @@ function runFixInternal(options) {
         note: `removed ${staleLockPaths.length} stale lock(s)`,
       });
     }
-  }
-
-  if (!options.skipPackageJson) {
-    operations.push(ensurePackageScripts(repoRoot, Boolean(options.dryRun), { force: Boolean(options.force) }));
   }
 
   if (!options.skipAgents) {
@@ -4987,8 +5284,7 @@ function runScanInternal(options) {
   const requiredPaths = [
     ...OMX_SCAFFOLD_DIRECTORIES,
     ...Array.from(OMX_SCAFFOLD_FILES.keys()),
-    ...TEMPLATE_FILES.map((entry) => toDestinationPath(entry)),
-    LOCK_FILE_RELATIVE,
+    ...REQUIRED_WORKFLOW_FILES,
   ];
 
   for (const relativePath of requiredPaths) {
@@ -6607,17 +6903,18 @@ function doctorAudit(rawArgs) {
 
   const packagePath = path.join(repoRoot, 'package.json');
   if (!fs.existsSync(packagePath)) {
-    warn('package.json not found (npm helper scripts cannot be verified)');
+    warn('package.json not found (legacy agent:* script drift cannot be checked)');
   } else {
     try {
       const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
       const scripts = pkg.scripts || {};
-      for (const [name, expectedValue] of Object.entries(REQUIRED_PACKAGE_SCRIPTS)) {
-        if (scripts[name] !== expectedValue) {
-          fail(`package.json script mismatch for "${name}"`);
-        } else {
-          ok(`package.json script "${name}" is configured`);
-        }
+      const legacyAgentScripts = Object.entries(LEGACY_MANAGED_PACKAGE_SCRIPTS)
+        .filter(([name, expectedValue]) => scripts[name] === expectedValue)
+        .map(([name]) => name);
+      if (legacyAgentScripts.length > 0) {
+        warn(`legacy agent:* package.json scripts remain (${legacyAgentScripts.join(', ')}); run '${SHORT_TOOL_NAME} migrate' to remove them`);
+      } else {
+        ok('package.json does not contain Guardex-managed agent:* helper scripts');
       }
     } catch (error) {
       fail(`package.json is invalid JSON: ${error.message}`);
@@ -6699,6 +6996,167 @@ function prompt(rawArgs) {
   return copyPrompt();
 }
 
+function printStandaloneOperations(title, rootLabel, operations, dryRun = false) {
+  console.log(`[${TOOL_NAME}] ${title}: ${rootLabel}`);
+  for (const operation of operations) {
+    const note = operation.note ? ` (${operation.note})` : '';
+    console.log(`  - ${operation.status.padEnd(12)} ${operation.file}${note}`);
+  }
+  if (dryRun) {
+    console.log(`[${TOOL_NAME}] Dry run complete. No files were modified.`);
+  }
+}
+
+function branch(rawArgs) {
+  const [subcommand, ...rest] = rawArgs;
+  if (subcommand === 'start') {
+    const { target, passthrough } = extractTargetedArgs(rest);
+    invokePackageAsset('branchStart', passthrough, { cwd: resolveRepoRoot(target) });
+    return;
+  }
+  if (subcommand === 'finish') {
+    const { target, passthrough } = extractTargetedArgs(rest);
+    invokePackageAsset('branchFinish', passthrough, { cwd: resolveRepoRoot(target) });
+    return;
+  }
+  if (subcommand === 'merge') return merge(rest);
+  throw new Error(
+    `Usage: ${SHORT_TOOL_NAME} branch <start|finish|merge> [options] ` +
+    `(examples: '${SHORT_TOOL_NAME} branch start "<task>" "<agent>"', '${SHORT_TOOL_NAME} branch finish --branch <agent/...>')`,
+  );
+}
+
+function locks(rawArgs) {
+  const { target, passthrough } = extractTargetedArgs(rawArgs);
+  const result = runPackageAsset('lockTool', passthrough, { cwd: resolveRepoRoot(target) });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exitCode = result.status;
+}
+
+function worktree(rawArgs) {
+  const [subcommand, ...rest] = rawArgs;
+  if (subcommand === 'prune') {
+    const { target, passthrough } = extractTargetedArgs(rest);
+    invokePackageAsset('worktreePrune', passthrough, { cwd: resolveRepoRoot(target) });
+    return;
+  }
+  throw new Error(`Usage: ${SHORT_TOOL_NAME} worktree prune [cleanup-options]`);
+}
+
+function hook(rawArgs) {
+  const [subcommand, ...rest] = rawArgs;
+  if (subcommand === 'run') {
+    const [hookName, ...hookArgs] = rest;
+    if (!HOOK_NAMES.includes(hookName)) {
+      throw new Error(`Unknown hook name: ${hookName || '(missing)'}`);
+    }
+    const { target, passthrough } = extractTargetedArgs(hookArgs);
+    const hookAssetPath = path.join(TEMPLATE_ROOT, 'githooks', hookName);
+    const result = run('bash', [hookAssetPath, ...passthrough], {
+      cwd: resolveRepoRoot(target),
+      stdio: hookName === 'pre-push' ? 'inherit' : 'pipe',
+      env: packageAssetEnv(),
+    });
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+    process.exitCode = result.status;
+    return;
+  }
+  if (subcommand === 'install') {
+    const { target, passthrough } = extractTargetedArgs(rest);
+    if (passthrough.length > 0) {
+      throw new Error(`Unknown hook install option: ${passthrough[0]}`);
+    }
+    const repoRoot = resolveRepoRoot(target);
+    const hookResult = configureHooks(repoRoot, false);
+    console.log(`[${TOOL_NAME}] Hook install target: ${repoRoot}`);
+    console.log(`  - hooksPath    ${hookResult.status} ${hookResult.key}=${hookResult.value}`);
+    process.exitCode = 0;
+    return;
+  }
+  throw new Error(`Usage: ${SHORT_TOOL_NAME} hook <run|install> ...`);
+}
+
+function internal(rawArgs) {
+  const [subcommand, assetKey, ...rest] = rawArgs;
+  if (subcommand !== 'run-shell') {
+    throw new Error(`Unknown internal command: ${subcommand || '(missing)'}`);
+  }
+  const { target, passthrough } = extractTargetedArgs(rest);
+  const result = runPackageAsset(assetKey, passthrough, { cwd: resolveRepoRoot(target) });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  process.exitCode = result.status;
+}
+
+function installAgentSkills(rawArgs) {
+  let dryRun = false;
+  let force = false;
+  for (const arg of rawArgs) {
+    if (arg === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    if (arg === '--force') {
+      force = true;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+
+  const operations = USER_LEVEL_SKILL_ASSETS.map((asset) => installUserLevelAsset(asset, { dryRun, force }));
+  printStandaloneOperations('User-level Guardex skills', GUARDEX_HOME_DIR, operations, dryRun);
+  process.exitCode = 0;
+}
+
+function migrate(rawArgs) {
+  const { target, passthrough } = extractTargetedArgs(rawArgs);
+  let dryRun = false;
+  let force = false;
+  let installSkills = false;
+  for (const arg of passthrough) {
+    if (arg === '--dry-run') {
+      dryRun = true;
+      continue;
+    }
+    if (arg === '--force') {
+      force = true;
+      continue;
+    }
+    if (arg === '--install-agent-skills') {
+      installSkills = true;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+
+  const repoRoot = resolveRepoRoot(target);
+  const fixPayload = runFixInternal({
+    target: repoRoot,
+    dryRun,
+    force,
+    skipAgents: false,
+    skipPackageJson: true,
+    skipGitignore: false,
+    dropStaleLocks: true,
+  });
+  printOperations('Migrate/fix', fixPayload, dryRun);
+
+  if (installSkills) {
+    const skillOps = USER_LEVEL_SKILL_ASSETS.map((asset) => installUserLevelAsset(asset, { dryRun, force }));
+    printStandaloneOperations('Migrate/install-agent-skills', GUARDEX_HOME_DIR, skillOps, dryRun);
+  }
+
+  const removableLegacyFiles = LEGACY_MANAGED_REPO_FILES.filter(
+    (relativePath) => !REQUIRED_WORKFLOW_FILES.includes(relativePath),
+  );
+  const removalOps = removableLegacyFiles.map((relativePath) => removeLegacyManagedRepoFile(repoRoot, relativePath, { dryRun, force }));
+  removalOps.push(removeLegacyPackageScripts(repoRoot, dryRun));
+  printStandaloneOperations('Migrate/cleanup', repoRoot, removalOps, dryRun);
+  process.exitCode = 0;
+}
+
 function cleanup(rawArgs) {
   const options = parseCleanupArgs(rawArgs);
   const repoRoot = resolveRepoRoot(options.target);
@@ -6707,7 +7165,7 @@ function cleanup(rawArgs) {
     throw new Error(`Missing cleanup script: ${pruneScript}. Run '${SHORT_TOOL_NAME} setup' first.`);
   }
 
-  const args = [pruneScript];
+  const args = [];
   if (options.base) {
     args.push('--base', options.base);
   }
@@ -6738,7 +7196,7 @@ function cleanup(rawArgs) {
   }
 
   const runCleanupCycle = () => {
-    const runResult = run('bash', args, { cwd: repoRoot, stdio: 'inherit' });
+    const runResult = runPackageAsset('worktreePrune', args, { cwd: repoRoot, stdio: 'inherit' });
     if (runResult.status !== 0) {
       throw new Error('Cleanup command failed');
     }
@@ -6777,7 +7235,7 @@ function merge(rawArgs) {
     throw new Error(`Missing merge script: ${mergeScript}. Run '${SHORT_TOOL_NAME} setup' first.`);
   }
 
-  const args = [mergeScript];
+  const args = [];
   if (options.base) {
     args.push('--base', options.base);
   }
@@ -6794,7 +7252,7 @@ function merge(rawArgs) {
     args.push('--branch', branch);
   }
 
-  const mergeResult = run('bash', args, { cwd: repoRoot, stdio: 'pipe' });
+  const mergeResult = runPackageAsset('branchMerge', args, { cwd: repoRoot, stdio: 'pipe' });
   if (mergeResult.stdout) {
     process.stdout.write(mergeResult.stdout);
   }
@@ -6808,8 +7266,8 @@ function merge(rawArgs) {
   process.exitCode = 0;
 }
 
-function finish(rawArgs) {
-  const options = parseFinishArgs(rawArgs);
+function finish(rawArgs, defaults = {}) {
+  const options = parseFinishArgs(rawArgs, defaults);
   const repoRoot = resolveRepoRoot(options.target);
   const finishScript = path.join(repoRoot, 'scripts', 'agent-branch-finish.sh');
 
@@ -6880,26 +7338,31 @@ function finish(rawArgs) {
       }
 
       const finishArgs = [
-        finishScript,
         '--branch',
         branch,
         '--base',
         baseBranch,
-        '--via-pr',
         options.waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
         options.cleanup ? '--cleanup' : '--no-cleanup',
       ];
+      if (options.mergeMode === 'pr') {
+        finishArgs.push('--via-pr');
+      } else if (options.mergeMode === 'direct') {
+        finishArgs.push('--direct-only');
+      } else {
+        finishArgs.push('--mode', 'auto');
+      }
       if (options.keepRemote) {
         finishArgs.push('--keep-remote-branch');
       }
 
       if (options.dryRun) {
-        console.log(`[${TOOL_NAME}] [dry-run] Would run: bash ${finishArgs.join(' ')}`);
+        console.log(`[${TOOL_NAME}] [dry-run] Would run: gx branch finish ${finishArgs.join(' ')}`);
         succeeded += 1;
         continue;
       }
 
-      const finishResult = run('bash', finishArgs, { cwd: repoRoot, stdio: 'pipe' });
+      const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot, stdio: 'pipe' });
       if (finishResult.stdout) {
         process.stdout.write(finishResult.stdout);
       }
@@ -7293,6 +7756,13 @@ function main() {
 
   if (command === 'prompt') return prompt(rest);
   if (command === 'doctor') return doctor(rest);
+  if (command === 'branch') return branch(rest);
+  if (command === 'locks') return locks(rest);
+  if (command === 'worktree') return worktree(rest);
+  if (command === 'hook') return hook(rest);
+  if (command === 'migrate') return migrate(rest);
+  if (command === 'install-agent-skills') return installAgentSkills(rest);
+  if (command === 'internal') return internal(rest);
   if (command === 'agents') return agents(rest);
   if (command === 'merge') return merge(rest);
   if (command === 'finish') return finish(rest);

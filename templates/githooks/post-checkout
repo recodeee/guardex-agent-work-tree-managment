@@ -64,7 +64,7 @@ echo "[agent-primary-branch-guard] Primary checkout switched branches." >&2
 echo "[agent-primary-branch-guard]   from: $prev_branch (protected)" >&2
 echo "[agent-primary-branch-guard]   to:   $new_branch" >&2
 echo "[agent-primary-branch-guard] The primary working tree must stay on its base/protected branch." >&2
-echo "[agent-primary-branch-guard] Use 'git worktree add' (or scripts/agent-branch-start.sh) for feature work." >&2
+echo "[agent-primary-branch-guard] Use 'git worktree add' (or gx branch start) for feature work." >&2
 
 if [[ "$is_agent" == "1" ]]; then
   echo "[agent-primary-branch-guard] Agent session detected — reverting to '$prev_branch'." >&2

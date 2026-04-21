@@ -55,7 +55,13 @@ function runCmd(cmd, args, cwd, options = {}) {
   return cp.spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
-    env: { ...sanitizedEnv, ...pushBypassEnv, ...overrideEnv },
+    env: {
+      ...sanitizedEnv,
+      GUARDEX_CLI_ENTRY: cliPath,
+      GUARDEX_NODE_BIN: process.execPath,
+      ...pushBypassEnv,
+      ...overrideEnv,
+    },
   });
 }
 
@@ -412,7 +418,7 @@ if (!canSpawnChildProcesses) {
 test('setup provisions workflow files and repo config', () => {
   const repoDir = initRepo();
 
-  let result = runNode(['setup', '--target', repoDir], repoDir);
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /OpenSpec core workflow: \/opsx:propose -> \/opsx:apply -> \/opsx:archive/);
   assert.match(result.stdout, /OpenSpec guide: docs\/openspec-getting-started\.md/);
@@ -435,15 +441,12 @@ test('setup provisions workflow files and repo config', () => {
     'scripts/agent-worktree-prune.sh',
     'scripts/agent-file-locks.py',
     'scripts/guardex-env.sh',
-    'scripts/install-agent-git-hooks.sh',
     'scripts/openspec/init-plan-workspace.sh',
     'scripts/openspec/init-change-workspace.sh',
     '.githooks/pre-commit',
     '.githooks/pre-push',
     '.githooks/post-merge',
-    '.codex/skills/gitguardex/SKILL.md',
-    '.codex/skills/guardex-merge-skills-to-dev/SKILL.md',
-    '.claude/commands/gitguardex.md',
+    '.githooks/post-checkout',
     '.github/pull.yml.example',
     '.github/workflows/cr.yml',
     '.omx/state/agent-file-locks.json',
@@ -455,6 +458,14 @@ test('setup provisions workflow files and repo config', () => {
     assert.equal(fs.existsSync(path.join(repoDir, relativePath)), true, `${relativePath} missing`);
   }
 
+  const branchStartShim = fs.readFileSync(path.join(repoDir, 'scripts', 'agent-branch-start.sh'), 'utf8');
+  assert.match(branchStartShim, /exec "\$node_bin" "\$GUARDEX_CLI_ENTRY" 'branch' 'start' "\$@"/);
+  assert.match(branchStartShim, /exec "\$cli_bin" 'branch' 'start' "\$@"/);
+
+  const preCommitShim = fs.readFileSync(path.join(repoDir, '.githooks', 'pre-commit'), 'utf8');
+  assert.match(preCommitShim, /exec "\$node_bin" "\$GUARDEX_CLI_ENTRY" 'hook' 'run' 'pre-commit' "\$@"/);
+  assert.match(preCommitShim, /exec "\$cli_bin" 'hook' 'run' 'pre-commit' "\$@"/);
+
   const crWorkflow = fs.readFileSync(path.join(repoDir, '.github', 'workflows', 'cr.yml'), 'utf8');
   assert.match(crWorkflow, /name:\s+Code Review/);
   assert.match(crWorkflow, /pull_request:/);
@@ -464,18 +475,8 @@ test('setup provisions workflow files and repo config', () => {
   assert.doesNotMatch(crWorkflow, /if:\s+\$\{\{\s*secrets\.OPENAI_API_KEY/);
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
-  assert.equal(packageJson.scripts['agent:codex'], 'bash ./scripts/codex-agent.sh');
-  assert.equal(packageJson.scripts['agent:review:watch'], 'bash ./scripts/review-bot-watch.sh');
-  assert.equal(packageJson.scripts['agent:branch:start'], 'bash ./scripts/agent-branch-start.sh');
-  assert.equal(packageJson.scripts['agent:finish'], 'gx finish --all');
-  assert.equal(packageJson.scripts['agent:plan:init'], 'bash ./scripts/openspec/init-plan-workspace.sh');
-  assert.equal(packageJson.scripts['agent:change:init'], 'bash ./scripts/openspec/init-change-workspace.sh');
-  assert.equal(packageJson.scripts['agent:protect:list'], 'gx protect list');
-  assert.equal(packageJson.scripts['agent:branch:sync'], 'gx sync');
-  assert.equal(packageJson.scripts['agent:branch:sync:check'], 'gx sync --check');
-  assert.equal(packageJson.scripts['agent:docker:load'], 'bash ./scripts/guardex-docker-loader.sh');
-  assert.equal(packageJson.scripts['agent:safety:setup'], 'gx setup');
-  assert.equal(packageJson.scripts['agent:cleanup'], 'gx cleanup');
+  const managedAgentScripts = Object.keys(packageJson.scripts || {}).filter((name) => name.startsWith('agent:'));
+  assert.deepEqual(managedAgentScripts, [], 'setup should not inject agent:* helper scripts');
 
   const agentsContent = fs.readFileSync(path.join(repoDir, 'AGENTS.md'), 'utf8');
   assert.equal(agentsContent.includes('<!-- multiagent-safety:START -->'), true);
@@ -495,9 +496,6 @@ test('setup provisions workflow files and repo config', () => {
   assert.match(gitignoreContent, /\.omx\//);
   assert.match(gitignoreContent, /\.omc\//);
   assert.match(gitignoreContent, /oh-my-codex\//);
-  assert.match(gitignoreContent, /\.codex\/skills\/gitguardex\/SKILL\.md/);
-  assert.match(gitignoreContent, /\.codex\/skills\/guardex-merge-skills-to-dev\/SKILL\.md/);
-  assert.match(gitignoreContent, /\.claude\/commands\/gitguardex\.md/);
   assert.match(gitignoreContent, /\.omx\/state\/agent-file-locks\.json/);
   assert.match(gitignoreContent, /# multiagent-safety:END/);
 
@@ -505,7 +503,7 @@ test('setup provisions workflow files and repo config', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout.trim(), '.githooks');
 
-  const secondRun = runNode(['setup', '--target', repoDir], repoDir);
+  const secondRun = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
   assert.equal(secondRun.status, 0, secondRun.stderr || secondRun.stdout);
 });
 
@@ -527,7 +525,8 @@ test('setup on a fresh compose repo prints onboarding hints and installs a worki
   assert.match(result.stdout, /GUARDEX_DOCKER_SERVICE/);
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
-  assert.equal(packageJson.scripts['agent:docker:load'], 'bash ./scripts/guardex-docker-loader.sh');
+  const managedAgentScripts = Object.keys(packageJson.scripts || {}).filter((name) => name.startsWith('agent:'));
+  assert.deepEqual(managedAgentScripts, [], 'setup should not inject agent:* helper scripts');
 
   const { fakeBin } = createFakeDockerScript(
     'if [[ "$1" == "compose" && "$2" == "version" ]]; then\n' +
@@ -561,26 +560,46 @@ test('setup on a fresh compose repo prints onboarding hints and installs a worki
   assert.match(result.stdout, /EXEC:compose exec -T app echo hello/);
 });
 
-test('setup and doctor explain .codex file conflicts and still write managed gitignore first', () => {
+test('setup --no-global-install skips npm global toolchain probing', () => {
   const repoDir = initRepo();
-  fs.writeFileSync(path.join(repoDir, '.codex'), '', 'utf8');
+  const markerPath = path.join(repoDir, '.npm-probe-marker');
+  const fakeNpmPath = createFakeNpmScript(
+    'printf \'%s\\n\' "called" > "${GUARDEX_TEST_NPM_MARKER}"\n' +
+      'exit 99\n',
+  );
+
+  const result = runNodeWithEnv(
+    ['setup', '--target', repoDir, '--no-global-install'],
+    repoDir,
+    {
+      GUARDEX_NPM_BIN: fakeNpmPath,
+      GUARDEX_TEST_NPM_MARKER: markerPath,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(fs.existsSync(markerPath), false, '--no-global-install should bypass npm probing entirely');
+});
+
+test('setup and doctor explain .githooks file conflicts and still write managed gitignore first', () => {
+  const repoDir = initRepo();
+  fs.writeFileSync(path.join(repoDir, '.githooks'), '', 'utf8');
 
   let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
-  assert.notEqual(result.status, 0, 'setup should fail when .codex is a file');
+  assert.notEqual(result.status, 0, 'setup should fail when .githooks is a file');
   let combined = `${result.stdout}\n${result.stderr}`;
-  assert.match(combined, /Path conflict: \.codex exists as a file/);
-  assert.match(combined, /\.codex\/skills\/gitguardex\/SKILL\.md needs it to be a directory/);
+  assert.match(combined, /Path conflict: \.githooks exists as a file/);
+  assert.match(combined, /\.githooks\/pre-commit needs it to be a directory/);
 
   let gitignoreContent = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
   assert.match(gitignoreContent, /# multiagent-safety:START/);
   assert.match(gitignoreContent, /scripts\/agent-branch-start\.sh/);
   assert.match(gitignoreContent, /scripts\/agent-file-locks\.py/);
-  assert.match(gitignoreContent, /\.codex\/skills\/gitguardex\/SKILL\.md/);
+  assert.match(gitignoreContent, /^\.githooks$/m);
 
   result = runNode(['doctor', '--target', repoDir], repoDir);
-  assert.notEqual(result.status, 0, 'doctor should fail when .codex is a file');
+  assert.notEqual(result.status, 0, 'doctor should fail when .githooks is a file');
   combined = `${result.stdout}\n${result.stderr}`;
-  assert.match(combined, /Path conflict: \.codex exists as a file/);
+  assert.match(combined, /Path conflict: \.githooks exists as a file/);
 
   gitignoreContent = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
   assert.match(gitignoreContent, /scripts\/agent-file-locks\.py/);
@@ -738,13 +757,81 @@ test('setup and doctor preserve existing agent scripts in package.json by defaul
   assert.equal(result.status, 0, result.stderr || result.stdout);
   let currentPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
   assert.deepEqual(currentPackage.scripts, customPackage.scripts, 'setup should preserve existing agent scripts');
-  assert.match(result.stdout, /preserved existing agent:\* scripts/);
 
   result = runNode(['doctor', '--target', repoDir], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   currentPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
   assert.deepEqual(currentPackage.scripts, customPackage.scripts, 'doctor should preserve existing agent scripts');
-  assert.match(result.stdout, /preserved existing agent:\* scripts/);
+});
+
+test('migrate removes legacy copied assets and installs user-level skills on request', () => {
+  const repoDir = initRepo();
+  const repoRoot = path.resolve(__dirname, '..');
+  const guardexHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-migrate-home-'));
+  const packagePath = path.join(repoDir, 'package.json');
+
+  fs.mkdirSync(path.join(repoDir, '.codex', 'skills', 'gitguardex'), { recursive: true });
+  fs.mkdirSync(path.join(repoDir, '.claude', 'commands'), { recursive: true });
+  fs.mkdirSync(path.join(repoDir, 'scripts'), { recursive: true });
+
+  fs.writeFileSync(
+    path.join(repoDir, 'scripts', 'install-agent-git-hooks.sh'),
+    fs.readFileSync(path.join(repoRoot, 'templates', 'scripts', 'install-agent-git-hooks.sh'), 'utf8'),
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(repoDir, '.codex', 'skills', 'gitguardex', 'SKILL.md'),
+    fs.readFileSync(path.join(repoRoot, 'templates', 'codex', 'skills', 'gitguardex', 'SKILL.md'), 'utf8'),
+    'utf8',
+  );
+  fs.writeFileSync(
+    path.join(repoDir, '.claude', 'commands', 'gitguardex.md'),
+    fs.readFileSync(path.join(repoRoot, 'templates', 'claude', 'commands', 'gitguardex.md'), 'utf8'),
+    'utf8',
+  );
+
+  fs.writeFileSync(
+    packagePath,
+    JSON.stringify(
+      {
+        name: path.basename(repoDir),
+        private: true,
+        scripts: {
+          'agent:codex': 'bash ./scripts/codex-agent.sh',
+          'agent:cleanup': 'gx cleanup',
+          'agent:branch:start': 'bash ./scripts/custom-branch-start.sh',
+          test: 'node --test',
+        },
+      },
+      null,
+      2,
+    ) + '\n',
+    'utf8',
+  );
+
+  const result = runNodeWithEnv(
+    ['migrate', '--target', repoDir, '--install-agent-skills'],
+    repoDir,
+    { GUARDEX_HOME_DIR: guardexHomeDir },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  assert.equal(fs.existsSync(path.join(repoDir, 'scripts', 'install-agent-git-hooks.sh')), false);
+  assert.equal(fs.existsSync(path.join(repoDir, '.codex', 'skills', 'gitguardex', 'SKILL.md')), false);
+  assert.equal(fs.existsSync(path.join(repoDir, '.claude', 'commands', 'gitguardex.md')), false);
+
+  const migratedPackage = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  assert.equal(migratedPackage.scripts['agent:codex'], undefined);
+  assert.equal(migratedPackage.scripts['agent:cleanup'], undefined);
+  assert.equal(migratedPackage.scripts['agent:branch:start'], 'bash ./scripts/custom-branch-start.sh');
+
+  assert.equal(fs.existsSync(path.join(guardexHomeDir, '.codex', 'skills', 'gitguardex', 'SKILL.md')), true);
+  assert.equal(fs.existsSync(path.join(guardexHomeDir, '.claude', 'commands', 'gitguardex.md')), true);
+
+  const branchStartShim = fs.readFileSync(path.join(repoDir, 'scripts', 'agent-branch-start.sh'), 'utf8');
+  assert.match(branchStartShim, /exec "\$cli_bin" 'branch' 'start' "\$@"/);
+  const preCommitShim = fs.readFileSync(path.join(repoDir, '.githooks', 'pre-commit'), 'utf8');
+  assert.match(preCommitShim, /exec "\$cli_bin" 'hook' 'run' 'pre-commit' "\$@"/);
 });
 
 test('setup --parent-workspace-view creates one-level-up VS Code workspace for repo + agent worktrees', () => {
@@ -1264,9 +1351,9 @@ exit 1
 
   const createdBranch = extractCreatedBranch(result.stdout);
   result = runCmd('git', ['show-ref', '--verify', '--quiet', `refs/heads/${createdBranch}`], repoDir);
-  assert.equal(result.status, 0, 'doctor auto-finish should keep sandbox branch locally by default');
+  assert.notEqual(result.status, 0, 'doctor auto-finish should clean up the merged sandbox branch locally by default');
   result = runCmd('git', ['ls-remote', '--heads', 'origin', createdBranch], repoDir);
-  assert.match(result.stdout, /refs\/heads\//, 'doctor auto-finish should push sandbox branch to origin');
+  assert.equal(result.stdout.trim(), '', 'doctor auto-finish should clean up the merged sandbox branch remotely by default');
 
   const rootStatus = runCmd('git', ['status', '--short', '--untracked-files=no'], repoDir);
   assert.equal(rootStatus.status, 0, rootStatus.stderr || rootStatus.stdout);
@@ -1615,7 +1702,7 @@ test('setup pre-commit detects codex commit attempts on protected main (includin
   });
   assert.notEqual(result.status, 0, result.stdout);
   assert.match(result.stderr, /\[guardex-preedit-guard\] Codex edit\/commit detected on a protected branch\./);
-  assert.match(result.stderr, /bash scripts\/codex-agent\.sh/);
+  assert.match(result.stderr, /gx branch start/);
 });
 
 test('setup pre-commit allows codex managed guardrail commits on protected main only for AGENTS.md/.gitignore', () => {
@@ -2356,16 +2443,6 @@ test('finish command auto-commits dirty agent worktree and runs PR finish flow f
 
   fs.writeFileSync(path.join(agentWorktree, 'finisher-note.txt'), 'pending branch finish\n', 'utf8');
 
-  const finishLog = path.join(repoDir, '.finish-invocations.log');
-  fs.writeFileSync(
-    path.join(repoDir, 'scripts', 'agent-branch-finish.sh'),
-    '#!/usr/bin/env bash\n' +
-      'set -euo pipefail\n' +
-      `printf '%s\\n' \"$*\" >> \"${finishLog}\"\n`,
-    'utf8',
-  );
-  fs.chmodSync(path.join(repoDir, 'scripts', 'agent-branch-finish.sh'), 0o755);
-
   result = runNode(
     ['finish', '--target', repoDir, '--branch', agentBranch, '--base', 'main', '--no-wait-for-merge', '--no-cleanup'],
     repoDir,
@@ -2374,13 +2451,9 @@ test('finish command auto-commits dirty agent worktree and runs PR finish flow f
   assert.match(result.stdout, new RegExp(`Finishing '${escapeRegexLiteral(agentBranch)}' -> 'main'`));
   assert.match(result.stdout, /Auto-committed/);
   assert.match(result.stdout, /Finish summary: total=1, success=1, failed=0, autoCommitted=1/);
-
-  const finishInvocations = fs.readFileSync(finishLog, 'utf8');
-  assert.match(finishInvocations, new RegExp(`--branch ${escapeRegexLiteral(agentBranch)}`));
-  assert.match(finishInvocations, /--base main/);
-  assert.match(finishInvocations, /--via-pr/);
-  assert.match(finishInvocations, /--no-wait-for-merge/);
-  assert.match(finishInvocations, /--no-cleanup/);
+  assert.equal(fs.existsSync(agentWorktree), true, 'finish --no-cleanup should keep the agent worktree');
+  let branchResult = runCmd('git', ['show-ref', '--verify', '--quiet', `refs/heads/${agentBranch}`], repoDir);
+  assert.equal(branchResult.status, 0, 'finish --no-cleanup should keep the local agent branch');
 
   const worktreeStatus = runCmd('git', ['status', '--short'], agentWorktree);
   assert.equal(worktreeStatus.status, 0, worktreeStatus.stderr || worktreeStatus.stdout);
@@ -3103,10 +3176,14 @@ test('post-merge auto-runs cleanup on base branch and skips non-base branches', 
       "if (marker) fs.appendFileSync(marker, process.argv.slice(2).join(' ') + '\\n', 'utf8');\n",
     'utf8',
   );
-
-  let result = runCmd('bash', ['.githooks/post-merge', '0'], repoDir, {
+  const postMergeAsset = path.join(__dirname, '..', 'templates', 'githooks', 'post-merge');
+  const hookDispatchEnv = {
     GUARDEX_POST_MERGE_MARKER: markerPath,
-  });
+    GUARDEX_CLI_ENTRY: path.join(repoDir, 'bin', 'multiagent-safety.js'),
+    GUARDEX_NODE_BIN: process.execPath,
+  };
+
+  let result = runCmd('bash', [postMergeAsset, '0'], repoDir, hookDispatchEnv);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   let invocations = fs
@@ -3124,9 +3201,7 @@ test('post-merge auto-runs cleanup on base branch and skips non-base branches', 
   result = runCmd('git', ['checkout', '-b', 'feature/post-merge-skip'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
-  result = runCmd('bash', ['.githooks/post-merge', '0'], repoDir, {
-    GUARDEX_POST_MERGE_MARKER: markerPath,
-  });
+  result = runCmd('bash', [postMergeAsset, '0'], repoDir, hookDispatchEnv);
   assert.equal(result.status, 0, result.stderr || result.stdout);
 
   invocations = fs
@@ -4202,7 +4277,7 @@ test('OpenSpec plan workspace scaffold creates expected role/task structure', ()
   assert.match(plannerTasks, /## 5\. Collaboration/);
   assert.match(plannerTasks, /## 6\. Cleanup/);
   assert.match(plannerTasks, /\[P1\] READY - Initial planning draft checkpoint/);
-  assert.match(plannerTasks, /bash scripts\/agent-branch-finish\.sh/);
+  assert.match(plannerTasks, /gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup/);
 
   const plannerPlan = fs.readFileSync(path.join(planDir, 'planner', 'plan.md'), 'utf8');
   assert.match(plannerPlan, /This ExecPlan is a living document/);
@@ -4406,7 +4481,7 @@ test('doctor repairs setup drift and confirms repo is safe', () => {
   assert.match(result.stdout, /Repo is fully safe/);
 
   const repairedHook = fs.readFileSync(path.join(repoDir, '.githooks', 'pre-commit'), 'utf8');
-  assert.match(repairedHook, /AGENTS\.md\|\.gitignore/);
+  assert.match(repairedHook, /'hook' 'run' 'pre-commit'/);
   assert.equal(fs.existsSync(path.join(repoDir, '.omx', 'notepad.md')), true);
   assert.equal(fs.existsSync(path.join(repoDir, '.omx', 'project-memory.json')), true);
   assert.equal(fs.existsSync(path.join(repoDir, '.omx', 'logs')), true);
@@ -4463,7 +4538,7 @@ test('doctor recurses into nested frontend repos and repairs protected-main drif
   assert.match(repairedFrontendGitignore, /^scripts\/\*$/m);
   assert.match(repairedFrontendGitignore, /^\.githooks$/m);
   const repairedFrontendHook = fs.readFileSync(path.join(frontendDir, '.githooks', 'pre-commit'), 'utf8');
-  assert.match(repairedFrontendHook, /AGENTS\.md\|\.gitignore/);
+  assert.match(repairedFrontendHook, /'hook' 'run' 'pre-commit'/);
 
   const frontendScanAfter = runNode(['scan', '--target', frontendDir], repoDir);
   assert.equal(frontendScanAfter.status, 0, frontendScanAfter.stderr || frontendScanAfter.stdout);
@@ -4605,8 +4680,8 @@ test('prompt outputs AI setup instructions', () => {
   assert.match(result.stdout, /GitGuardex \(gx\) setup checklist/);
   assert.match(result.stdout, /gx setup/);
   assert.match(result.stdout, /gx doctor/);
-  assert.match(result.stdout, /codex-agent\.sh/);
-  assert.match(result.stdout, /scripts\/agent-file-locks\.py claim/);
+  assert.match(result.stdout, /gx branch start/);
+  assert.match(result.stdout, /gx locks claim/);
   assert.match(result.stdout, /gx finish --all/);
   assert.match(result.stdout, /\/opsx:propose/);
   assert.match(result.stdout, /https:\/\/github\.com\/apps\/pull/);
@@ -4622,7 +4697,7 @@ test('prompt --exec outputs command-only checklist', () => {
   assert.match(result.stdout, /^gh --version/m);
   assert.match(result.stdout, /^gx setup$/m);
   assert.match(result.stdout, /^gx doctor$/m);
-  assert.match(result.stdout, /codex-agent\.sh/);
+  assert.match(result.stdout, /^gx branch start "<task>" "<agent>"$/m);
   assert.match(result.stdout, /^gx finish --all$/m);
   assert.match(result.stdout, /^gx cleanup$/m);
   assert.doesNotMatch(result.stdout, /GitGuardex \(gx\) setup checklist/);
@@ -4746,10 +4821,6 @@ exit 1
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(fs.existsSync(marker), false, 'global install should not run');
   assert.match(result.stdout, /Companion installs skipped by user choice/);
-  assert.match(
-    result.stdout,
-    /Guardex needs oh-my-claudecode as a dependency: https:\/\/github\.com\/Yeachan-Heo\/oh-my-claudecode/,
-  );
 });
 
 test('setup installs missing local companion tools with explicit approval', () => {
@@ -5084,25 +5155,13 @@ test('cleanup command can remove squash-merged agent branches via merged PR dete
 
 test('cleanup command watch mode defaults to 60-minute idle threshold and supports one-cycle execution', () => {
   const repoDir = initRepo();
-  const scriptsDir = path.join(repoDir, 'scripts');
-  fs.mkdirSync(scriptsDir, { recursive: true });
-
-  const pruneScriptPath = path.join(scriptsDir, 'agent-worktree-prune.sh');
-  const markerArgs = path.join(repoDir, '.cleanup-watch-args');
-  fs.writeFileSync(
-    pruneScriptPath,
-    '#!/usr/bin/env bash\n' +
-      'set -euo pipefail\n' +
-      `printf '%s\\n' \"$*\" > \"${markerArgs}\"\n`,
-    'utf8',
-  );
-  fs.chmodSync(pruneScriptPath, 0o755);
+  const resultSetup = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(resultSetup.status, 0, resultSetup.stderr || resultSetup.stdout);
+  seedCommit(repoDir);
 
   const result = runNode(['cleanup', '--target', repoDir, '--watch', '--once', '--interval', '15'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const passedArgs = fs.readFileSync(markerArgs, 'utf8').trim();
-  assert.match(passedArgs, /--idle-minutes 60/);
-  assert.match(passedArgs, /--only-dirty-worktrees/);
+  assert.match(result.stdout, /Cleanup watch cycle=1 \(interval=15s, idleMinutes=60, maxBranches=unbounded\)\./);
 });
 
 test('release fails outside the maintainer repo path', () => {

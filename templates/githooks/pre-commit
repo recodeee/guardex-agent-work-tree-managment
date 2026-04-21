@@ -118,9 +118,9 @@ if [[ "$should_require_codex_agent_branch" == "1" && "${GUARDEX_ALLOW_CODEX_ON_N
 [guardex-preedit-guard] Codex edit/commit detected on a protected branch.
 GitGuardex requires Codex work to run from an isolated agent/* branch.
 Start the sub-branch/worktree with:
-  bash scripts/codex-agent.sh "<task-or-plan>" "<agent-name>"
+  gx branch start "<task-or-plan>" "<agent-name>"
 Or manually:
-  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+  gx branch start "<task-or-plan>" "<agent-name>"
 Then commit from the created agent/* branch.
 
 Temporary bypass (not recommended):
@@ -132,7 +132,7 @@ MSG
     cat >&2 <<'MSG'
 [codex-branch-guard] Codex agent commit blocked on non-agent branch.
 Use isolated branch/worktree first:
-  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+  gx branch start "<task-or-plan>" "<agent-name>"
 Then commit from the created agent/* branch.
 
 Temporary bypass (not recommended):
@@ -163,9 +163,9 @@ if [[ "$is_protected_branch" == "1" ]]; then
   cat >&2 <<'MSG'
 [agent-branch-guard] Direct commits on protected branches are blocked.
 Use an agent branch first:
-  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+  gx branch start "<task-or-plan>" "<agent-name>"
 After finishing work:
-  bash scripts/agent-branch-finish.sh
+  gx branch finish
 
 Temporary bypass (not recommended):
   ALLOW_COMMIT_ON_PROTECTED_BRANCH=1 git commit ...
@@ -177,7 +177,7 @@ if [[ "$is_agent_session" == "1" && "$branch" != agent/* ]]; then
   cat >&2 <<'MSG'
 [agent-branch-guard] Agent commits must run on dedicated agent/* branches.
 Start an agent branch first:
-  bash scripts/agent-branch-start.sh "<task-or-plan>" "<agent-name>"
+  gx branch start "<task-or-plan>" "<agent-name>"
 Then commit on that branch.
 
 Temporary bypass (not recommended):
@@ -199,7 +199,7 @@ if [[ "$branch" == agent/* ]]; then
     cat >&2 <<'MSG'
 [agent-branch-guard] Agent branch commits require file ownership locks.
 Claim files first:
-  python3 scripts/agent-file-locks.py claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
+  gx locks claim --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
 MSG
     exit 1
   fi

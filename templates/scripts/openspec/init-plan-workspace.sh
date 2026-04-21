@@ -434,7 +434,7 @@ EXCCPTEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -470,7 +470,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -506,7 +506,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -542,7 +542,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -578,7 +578,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -614,7 +614,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
@@ -650,7 +650,7 @@ TASKEOF
 
 ## 6. Cleanup
 
-- [ ] 6.1 If this lane owns finalization, run \`bash scripts/agent-branch-finish.sh --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
+- [ ] 6.1 If this lane owns finalization, run \`gx branch finish --branch <agent-branch> --base dev --via-pr --wait-for-merge --cleanup\`.
 - [ ] 6.2 Record PR URL + final \`MERGED\` state in the handoff.
 - [ ] 6.3 Confirm sandbox cleanup (\`git worktree list\`, \`git branch -a\`) or append \`BLOCKED:\` and stop.
 TASKEOF
