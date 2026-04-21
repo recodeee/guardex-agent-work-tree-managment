@@ -19,6 +19,13 @@ Verification note: `node --check bin/multiagent-safety.js` passed. The exact `no
 
 ## 4. Completion
 
-- [ ] 4.1 Finish the agent branch via PR merge + cleanup (`gx finish --via-pr --wait-for-merge --cleanup` or `bash scripts/agent-branch-finish.sh --branch <agent-branch> --base <base-branch> --via-pr --wait-for-merge --cleanup`).
-- [ ] 4.2 Record PR URL + final `MERGED` state in the completion handoff.
-- [ ] 4.3 Confirm sandbox cleanup (`git worktree list`, `git branch -a`) or capture a `BLOCKED:` handoff if merge/cleanup is pending.
+- [x] 4.1 Finish the agent branch via PR merge + cleanup (`gx finish --via-pr --wait-for-merge --cleanup` or `bash scripts/agent-branch-finish.sh --branch <agent-branch> --base <base-branch> --via-pr --wait-for-merge --cleanup`).
+- [x] 4.2 Record PR URL + final `MERGED` state in the completion handoff.
+- [x] 4.3 Confirm sandbox cleanup (`git worktree list`, `git branch -a`) or capture a `BLOCKED:` handoff if merge/cleanup is pending.
+
+Completion evidence:
+- PR: `#224` <https://github.com/recodeee/gitguardex/pull/224>
+- Final state: `MERGED` into `main` at `2026-04-21T11:55:12Z`
+- Merge/cleanup path: `bash scripts/agent-branch-finish.sh --branch "agent/codex/auto-release-writer-2026-04-21-13-20" --base main --via-pr --wait-for-merge --cleanup`
+- Cleanup confirmation: sandbox worktree `/home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__auto-release-writer-2026-04-21-13-20` is gone; `git branch -a | rg "auto-release-writer|main$|origin/main"` shows only `main` and `origin/main`
+- Follow-up note: the finish script hit a final remote-delete error after GitHub had already removed the merged branch ref, so `git remote prune origin` was used to clear the stale tracking ref locally
