@@ -42,6 +42,67 @@ flowchart LR
     I --> S
 ```
 
+<!-- ===================================================================== -->
+<!-- 1) GITHUB ABOUT SIDEBAR DESCRIPTION                                   -->
+<!-- ===================================================================== -->
+<!--                                                                       -->
+<!-- Paste one of these into:                                              -->
+<!--   Repo → Settings → General → Description                             -->
+<!--                                                                       -->
+<!-- The install command is removed — About is plain text, so there's no   -->
+<!-- way to make it copyable. The install lives in the README where the    -->
+<!-- code block gets GitHub's auto copy button on hover.                   -->
+<!-- ===================================================================== -->
+
+Option A — leads with the tagline (matches README h1):
+    Guardian T-Rex for your multi-agent repo. Isolated worktrees, file locks,
+    and PR-only merges stop parallel Codex & Claude agents from overwriting
+    each other's work. Auto-wires Oh My Codex, Oh My Claude, OpenSpec, and
+    Caveman.
+
+Option B — leads with the benefit:
+    Run many Codex & Claude agents in parallel without them overwriting each
+    other. Isolated worktrees, file locks, PR-only merges. Auto-wires Oh My
+    Codex, Oh My Claude, OpenSpec, and Caveman in every worktree.
+
+Option C — punchiest, under 200 chars:
+    Safety layer for parallel Codex & Claude agents. Isolated worktrees +
+    file locks + PR-only merges. Auto-wires Oh My Codex, Oh My Claude,
+    OpenSpec, and Caveman.
+
+
+<!-- ===================================================================== -->
+<!-- 2) README INSTALL HERO SECTION                                        -->
+<!-- ===================================================================== -->
+<!--                                                                       -->
+<!-- Drop this near the top of README.md — above "The problem" or right    -->
+<!-- after the badges row. The code block gets GitHub's automatic copy     -->
+<!-- button in the top-right corner on hover.                              -->
+<!-- ===================================================================== -->
+
+<p align="center">
+  <img alt="Install GitGuardex" src="https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/install-hero.svg" width="680">
+</p>
+
+<h3 align="center">Install in one line</h3>
+
+```bash
+npm i -g @imdeadpool/guardex
+```
+
+<p align="center">
+  <sub>
+    Then <code>cd</code> into your repo and run <code>gx setup</code> — hooks, scripts, templates,
+    and OMX&nbsp;/&nbsp;OpenSpec&nbsp;/&nbsp;caveman wiring all scaffold in one go.
+  </sub>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm" src="https://img.shields.io/npm/v/%40imdeadpool%2Fguardex?label=latest&style=flat-square&color=cb3837&logo=npm&logoColor=white"></a>
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="downloads" src="https://img.shields.io/npm/dm/%40imdeadpool%2Fguardex?label=downloads&style=flat-square&color=0b76c5"></a>
+  <a href="https://github.com/recodeee/gitguardex/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/recodeee/gitguardex?style=flat-square&color=d4ac0d"></a>
+</p>
+
 ### Dashboard
 
 ![Multi-agent dashboard example](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/dashboard-multi-agent.png)
