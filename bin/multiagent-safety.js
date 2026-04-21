@@ -357,7 +357,17 @@ function runtimeVersion() {
 }
 
 function supportsAnsiColors() {
-  return Boolean(process.stdout.isTTY) && !process.env.NO_COLOR && process.env.TERM !== 'dumb';
+  const forced = String(process.env.FORCE_COLOR || '').trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(forced)) {
+    return false;
+  }
+  if (forced.length > 0) {
+    return true;
+  }
+  if (process.env.NO_COLOR) {
+    return false;
+  }
+  return Boolean(process.stdout.isTTY) && process.env.TERM !== 'dumb';
 }
 
 function colorize(text, colorCode) {
@@ -365,6 +375,56 @@ function colorize(text, colorCode) {
     return text;
   }
   return `\u001B[${colorCode}m${text}\u001B[0m`;
+}
+
+function doctorOutputColorCode(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (['active', 'done', 'ok', 'safe', 'success'].includes(normalized)) {
+    return '32';
+  }
+  if (normalized === 'disabled') {
+    return '36';
+  }
+  if (['degraded', 'pending', 'skip', 'warn', 'warning'].includes(normalized)) {
+    return '33';
+  }
+  if (['error', 'fail', 'inactive', 'unsafe'].includes(normalized)) {
+    return '31';
+  }
+  return null;
+}
+
+function colorizeDoctorOutput(text, status) {
+  const colorCode = doctorOutputColorCode(status);
+  return colorCode ? colorize(text, colorCode) : text;
+}
+
+function detectAutoFinishDetailStatus(detail) {
+  const trimmed = String(detail || '').trim();
+  const match = trimmed.match(/^\[(\w+)\]/);
+  if (match) {
+    return match[1].toLowerCase();
+  }
+  if (/^Skipped\b/i.test(trimmed) || /^No local agent branches found\b/i.test(trimmed)) {
+    return 'skip';
+  }
+  return null;
+}
+
+function detectAutoFinishSummaryStatus(summary) {
+  if (!summary || summary.enabled === false) {
+    return detectAutoFinishDetailStatus(summary?.details?.[0]);
+  }
+  if ((summary.failed || 0) > 0) {
+    return 'fail';
+  }
+  if ((summary.completed || 0) > 0) {
+    return 'done';
+  }
+  if ((summary.skipped || 0) > 0) {
+    return 'skip';
+  }
+  return null;
 }
 
 function statusDot(status) {
@@ -604,22 +664,29 @@ function printAutoFinishSummary(summary, options = {}) {
 
   if (enabled) {
     console.log(
-      `[${TOOL_NAME}] Auto-finish sweep (base=${baseBranch}): attempted=${summary.attempted}, completed=${summary.completed}, skipped=${summary.skipped}, failed=${summary.failed}`,
+      colorizeDoctorOutput(
+        `[${TOOL_NAME}] Auto-finish sweep (base=${baseBranch}): attempted=${summary.attempted}, completed=${summary.completed}, skipped=${summary.skipped}, failed=${summary.failed}`,
+        detectAutoFinishSummaryStatus(summary),
+      ),
     );
     const visibleDetails = verbose ? details : details.slice(0, detailLimit).map(summarizeAutoFinishDetail);
     for (const detail of visibleDetails) {
-      console.log(`[${TOOL_NAME}]   ${detail}`);
+      console.log(colorizeDoctorOutput(`[${TOOL_NAME}]   ${detail}`, detectAutoFinishDetailStatus(detail)));
     }
     if (!verbose && details.length > detailLimit) {
       console.log(
-        `[${TOOL_NAME}]   … ${details.length - detailLimit} more branch result(s). Re-run with --verbose-auto-finish for full details.`,
+        colorizeDoctorOutput(
+          `[${TOOL_NAME}]   … ${details.length - detailLimit} more branch result(s). Re-run with --verbose-auto-finish for full details.`,
+          'warn',
+        ),
       );
     }
     return;
   }
 
   if (details.length > 0) {
-    console.log(`[${TOOL_NAME}] ${verbose ? details[0] : summarizeAutoFinishDetail(details[0])}`);
+    const detail = verbose ? details[0] : summarizeAutoFinishDetail(details[0]);
+    console.log(colorizeDoctorOutput(`[${TOOL_NAME}] ${detail}`, detectAutoFinishDetailStatus(detail)));
   }
 }
 
@@ -5043,21 +5110,34 @@ function printScanResult(scan, json = false) {
 
   if (scan.guardexEnabled === false) {
     console.log(
-      `[${TOOL_NAME}] Guardex is disabled for this repo (${describeGuardexRepoToggle(scan.guardexToggle)}).`,
+      colorizeDoctorOutput(
+        `[${TOOL_NAME}] Guardex is disabled for this repo (${describeGuardexRepoToggle(scan.guardexToggle)}).`,
+        'disabled',
+      ),
     );
     return;
   }
 
   if (scan.findings.length === 0) {
-    console.log(`[${TOOL_NAME}] ✅ No safety issues detected.`);
+    console.log(colorizeDoctorOutput(`[${TOOL_NAME}] ✅ No safety issues detected.`, 'safe'));
     return;
   }
 
   for (const item of scan.findings) {
     const target = item.path ? ` (${item.path})` : '';
-    console.log(`[${item.level.toUpperCase()}] ${item.code}${target}: ${item.message}`);
+    console.log(
+      colorizeDoctorOutput(
+        `[${item.level.toUpperCase()}] ${item.code}${target}: ${item.message}`,
+        item.level,
+      ),
+    );
   }
-  console.log(`[${TOOL_NAME}] Summary: ${scan.errors} error(s), ${scan.warnings} warning(s).`);
+  console.log(
+    colorizeDoctorOutput(
+      `[${TOOL_NAME}] Summary: ${scan.errors} error(s), ${scan.warnings} warning(s).`,
+      scan.errors > 0 ? 'error' : 'warn',
+    ),
+  );
 }
 
 function setExitCodeFromScan(scan) {
@@ -5498,10 +5578,13 @@ function doctor(rawArgs) {
     verbose: singleRepoOptions.verboseAutoFinish,
   });
   if (safe) {
-    console.log(`[${TOOL_NAME}] ✅ Repo is fully safe.`);
+    console.log(colorizeDoctorOutput(`[${TOOL_NAME}] ✅ Repo is fully safe.`, 'safe'));
   } else {
     console.log(
-      `[${TOOL_NAME}] ⚠️ Repo is not fully safe yet (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
+      colorizeDoctorOutput(
+        `[${TOOL_NAME}] ⚠️ Repo is not fully safe yet (${scanResult.errors} error(s), ${scanResult.warnings} warning(s)).`,
+        scanResult.errors > 0 ? 'unsafe' : 'warn',
+      ),
     );
   }
   setExitCodeFromScan(scanResult);

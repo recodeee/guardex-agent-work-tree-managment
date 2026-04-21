@@ -1526,6 +1526,59 @@ exit 1
   assert.match(verboseOutput, /git -C ".+rebase --continue/);
 });
 
+test('doctor colors failure and success status lines when color output is enabled', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+  attachOriginRemoteForBranch(repoDir, 'main');
+  const { readyBranch, readyWorktree, fileName } = prepareDoctorAutoFinishReadyBranch(repoDir, {
+    taskName: 'doctor-color-status',
+    fileName: 'doctor-color-status.txt',
+  });
+
+  let result = runCmd('git', ['worktree', 'remove', readyWorktree, '--force'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  fs.writeFileSync(path.join(repoDir, fileName), 'main branch conflicting color change\n', 'utf8');
+  result = runCmd('git', ['add', fileName], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['commit', '-m', 'main branch conflicting color change'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const { fakePath: fakeGhPath } = createFakeGhScript(`
+if [[ "$1" == "--version" ]]; then
+  echo "gh version 2.0.0"
+  exit 0
+fi
+echo "unexpected gh args: $*" >&2
+exit 1
+`);
+
+  result = runNodeWithEnv(
+    ['doctor', '--target', repoDir, '--allow-protected-base-write'],
+    repoDir,
+    { GUARDEX_GH_BIN: fakeGhPath, FORCE_COLOR: '1' },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const ansiOutput = `${result.stdout}\n${result.stderr}`;
+  assert.match(ansiOutput, /\u001B\[32m\[gitguardex\] ✅ No safety issues detected\.\u001B\[0m/);
+  assert.match(
+    ansiOutput,
+    /\u001B\[31m\[gitguardex\] Auto-finish sweep \(base=main\): attempted=1, completed=0, skipped=\d+, failed=1\u001B\[0m/,
+  );
+  assert.match(
+    ansiOutput,
+    new RegExp(
+      `\\u001B\\[31m\\[gitguardex\\]\\s+\\[fail\\] ${escapeRegexLiteral(readyBranch)}: rebase conflict in finish flow; run rebase --continue or rebase --abort in the source-probe worktree\\u001B\\[0m`,
+    ),
+  );
+  assert.match(ansiOutput, /\u001B\[32m\[gitguardex\] ✅ Repo is fully safe\.\u001B\[0m/);
+});
+
 test('setup pre-commit blocks codex session commits on non-agent branches by default', () => {
   const repoDir = initRepo();
 
