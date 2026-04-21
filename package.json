@@ -60,7 +60,7 @@
   "bugs": {
     "url": "https://github.com/recodeee/gitguardex/issues"
   },
-  "homepage": "https://guardextutorial.com",
+  "homepage": "https://github.com/recodeee/gitguardex-frontend",
   "funding": "https://github.com/sponsors/recodeecom",
   "publishConfig": {
     "access": "public"

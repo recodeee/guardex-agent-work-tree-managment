@@ -462,17 +462,17 @@ If `package.json` exists, setup also adds `agent:*` helper scripts.
 
 ## Frontend mirror
 
-- Standalone frontend repo: <https://github.com/Webu-PRO/guardex-frontend>
+- Standalone frontend repo: <https://github.com/recodeee/gitguardex-frontend>
 - This repo tracks the frontend under `frontend/` and auto-mirrors it via `.github/workflows/sync-frontend-mirror.yml` on changes to `main`.
 
 Setup (in this repo):
 
 1. `Settings → Secrets and variables → Actions`
-2. Add secret `GUARDEX_FRONTEND_MIRROR_PAT` with `contents:write` on `Webu-PRO/guardex-frontend`
+2. Add secret `GUARDEX_FRONTEND_MIRROR_PAT` with `contents:write` on `recodeee/gitguardex-frontend`
 
 Optional overrides (Actions Variables):
 
-- `GUARDEX_FRONTEND_MIRROR_REPO` (default `Webu-PRO/guardex-frontend`)
+- `GUARDEX_FRONTEND_MIRROR_REPO` (default `recodeee/gitguardex-frontend`)
 - `GUARDEX_FRONTEND_MIRROR_BRANCH` (default `main`)
 
 Manual run:

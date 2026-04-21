@@ -21,7 +21,7 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      TARGET_REPO: ${{ vars.GUARDEX_FRONTEND_MIRROR_REPO || 'Webu-PRO/guardex-frontend' }}
+      TARGET_REPO: ${{ vars.GUARDEX_FRONTEND_MIRROR_REPO || 'recodeee/gitguardex-frontend' }}
       TARGET_BRANCH: ${{ vars.GUARDEX_FRONTEND_MIRROR_BRANCH || 'main' }}
       SOURCE_PREFIX: frontend
       SYNC_TOKEN: ${{ secrets.GUARDEX_FRONTEND_MIRROR_PAT }}
