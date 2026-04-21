@@ -89,6 +89,7 @@ const TEMPLATE_ROOT = path.resolve(__dirname, '..', 'templates');
 const TEMPLATE_FILES = [
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
+  'scripts/agent-branch-merge.sh',
   'scripts/codex-agent.sh',
   'scripts/guardex-docker-loader.sh',
   'scripts/review-bot-watch.sh',
@@ -112,6 +113,7 @@ const TEMPLATE_FILES = [
 const REQUIRED_WORKFLOW_FILES = [
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
+  'scripts/agent-branch-merge.sh',
   'scripts/guardex-docker-loader.sh',
   'scripts/agent-worktree-prune.sh',
   'scripts/agent-file-locks.py',
@@ -126,6 +128,7 @@ const REQUIRED_PACKAGE_SCRIPTS = {
   'agent:codex': 'bash ./scripts/codex-agent.sh',
   'agent:branch:start': 'bash ./scripts/agent-branch-start.sh',
   'agent:branch:finish': 'bash ./scripts/agent-branch-finish.sh',
+  'agent:branch:merge': 'bash ./scripts/agent-branch-merge.sh',
   'agent:cleanup': 'gx cleanup',
   'agent:hooks:install': 'bash ./scripts/install-agent-git-hooks.sh',
   'agent:locks:claim': 'python3 ./scripts/agent-file-locks.py claim',
@@ -149,6 +152,7 @@ const REQUIRED_PACKAGE_SCRIPTS = {
 const EXECUTABLE_RELATIVE_PATHS = new Set([
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
+  'scripts/agent-branch-merge.sh',
   'scripts/codex-agent.sh',
   'scripts/guardex-docker-loader.sh',
   'scripts/review-bot-watch.sh',
@@ -171,6 +175,7 @@ const CRITICAL_GUARDRAIL_PATHS = new Set([
   '.githooks/post-checkout',
   'scripts/agent-branch-start.sh',
   'scripts/agent-branch-finish.sh',
+  'scripts/agent-branch-merge.sh',
   'scripts/agent-worktree-prune.sh',
   'scripts/codex-agent.sh',
   'scripts/agent-file-locks.py',
@@ -233,6 +238,7 @@ const SUGGESTIBLE_COMMANDS = [
   'setup',
   'doctor',
   'agents',
+  'merge',
   'finish',
   'report',
   'protect',
@@ -257,6 +263,7 @@ const CLI_COMMAND_DESCRIPTIONS = [
   ['setup', 'Install, repair, and verify guardrails (flags: --repair, --install-only, --target)'],
   ['doctor', 'Repair drift + verify (auto-sandboxes on protected main)'],
   ['protect', 'Manage protected branches (list/add/remove/set/reset)'],
+  ['merge', 'Create/reuse an integration lane and merge overlapping agent branches'],
   ['sync', 'Sync agent branches with origin/<base>'],
   ['finish', 'Commit + PR + merge completed agent branches (--all, --branch)'],
   ['cleanup', 'Prune merged/stale agent branches and worktrees'],
@@ -304,13 +311,14 @@ const AI_SETUP_PROMPT = `GitGuardex (gx) setup checklist for Codex/Claude in thi
 3) Repair:     gx doctor
 4) Task loop:  bash scripts/codex-agent.sh "<task>" "<agent>"
                or branch-start -> python3 scripts/agent-file-locks.py claim -> branch-finish
-5) Finish:     gx finish --all
-6) Cleanup:    gx cleanup
-7) OpenSpec:   /opsx:propose -> /opsx:apply -> /opsx:archive
-8) Optional:   gx protect add release staging
-9) Optional:   gx sync --check && gx sync
-10) Review bot: install https://github.com/apps/cr-gpt + set OPENAI_API_KEY
-11) Fork sync:  install https://github.com/apps/pull + cp .github/pull.yml.example .github/pull.yml
+5) Integrate:  gx merge --branch <agent-a> --branch <agent-b>
+6) Finish:     gx finish --all
+7) Cleanup:    gx cleanup
+8) OpenSpec:   /opsx:propose -> /opsx:apply -> /opsx:archive
+9) Optional:   gx protect add release staging
+10) Optional:  gx sync --check && gx sync
+11) Review bot: install https://github.com/apps/cr-gpt + set OPENAI_API_KEY
+12) Fork sync:  install https://github.com/apps/pull + cp .github/pull.yml.example .github/pull.yml
 `;
 
 const AI_SETUP_COMMANDS = `npm i -g @imdeadpool/guardex
@@ -319,6 +327,7 @@ gx setup
 gx doctor
 bash scripts/codex-agent.sh "<task>" "<agent>"
 python3 scripts/agent-file-locks.py claim --branch "<agent-branch>" <file...>
+gx merge --branch "<agent-a>" --branch "<agent-b>"
 gx finish --all
 gx cleanup
 gx protect add release staging
@@ -3543,6 +3552,82 @@ function parseCleanupArgs(rawArgs) {
   return options;
 }
 
+function parseMergeArgs(rawArgs) {
+  const options = {
+    target: process.cwd(),
+    base: '',
+    into: '',
+    branches: [],
+    task: '',
+    agent: '',
+  };
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--target') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--target requires a path value');
+      }
+      options.target = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--base') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--base requires a branch value');
+      }
+      options.base = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--into') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--into requires an agent/* branch value');
+      }
+      options.into = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--branch') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--branch requires an agent/* branch value');
+      }
+      options.branches.push(next);
+      index += 1;
+      continue;
+    }
+    if (arg === '--task') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--task requires a task value');
+      }
+      options.task = next;
+      index += 1;
+      continue;
+    }
+    if (arg === '--agent') {
+      const next = rawArgs[index + 1];
+      if (!next) {
+        throw new Error('--agent requires an agent value');
+      }
+      options.agent = next;
+      index += 1;
+      continue;
+    }
+    throw new Error(`Unknown option: ${arg}`);
+  }
+
+  if (options.branches.length === 0) {
+    throw new Error('merge requires at least one --branch <agent/*> input');
+  }
+
+  return options;
+}
+
 function parseFinishArgs(rawArgs) {
   const options = {
     target: process.cwd(),
@@ -6587,6 +6672,46 @@ function cleanup(rawArgs) {
   process.exitCode = 0;
 }
 
+function merge(rawArgs) {
+  const options = parseMergeArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const mergeScript = path.join(repoRoot, 'scripts', 'agent-branch-merge.sh');
+
+  if (!fs.existsSync(mergeScript)) {
+    throw new Error(`Missing merge script: ${mergeScript}. Run '${SHORT_TOOL_NAME} setup' first.`);
+  }
+
+  const args = [mergeScript];
+  if (options.base) {
+    args.push('--base', options.base);
+  }
+  if (options.into) {
+    args.push('--into', options.into);
+  }
+  if (options.task) {
+    args.push('--task', options.task);
+  }
+  if (options.agent) {
+    args.push('--agent', options.agent);
+  }
+  for (const branch of options.branches) {
+    args.push('--branch', branch);
+  }
+
+  const mergeResult = run('bash', args, { cwd: repoRoot, stdio: 'pipe' });
+  if (mergeResult.stdout) {
+    process.stdout.write(mergeResult.stdout);
+  }
+  if (mergeResult.stderr) {
+    process.stderr.write(mergeResult.stderr);
+  }
+  if (mergeResult.status !== 0) {
+    throw new Error(`merge command failed with status ${mergeResult.status}`);
+  }
+
+  process.exitCode = 0;
+}
+
 function finish(rawArgs) {
   const options = parseFinishArgs(rawArgs);
   const repoRoot = resolveRepoRoot(options.target);
@@ -7073,6 +7198,7 @@ function main() {
   if (command === 'prompt') return prompt(rest);
   if (command === 'doctor') return doctor(rest);
   if (command === 'agents') return agents(rest);
+  if (command === 'merge') return merge(rest);
   if (command === 'finish') return finish(rest);
   if (command === 'report') return report(rest);
   if (command === 'protect') return protect(rest);
