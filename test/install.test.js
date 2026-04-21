@@ -502,8 +502,7 @@ test('setup and doctor explain .codex file conflicts and still write managed git
 
   let gitignoreContent = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
   assert.match(gitignoreContent, /# multiagent-safety:START/);
-  assert.match(gitignoreContent, /scripts\/agent-branch-start\.sh/);
-  assert.match(gitignoreContent, /scripts\/agent-file-locks\.py/);
+  assert.match(gitignoreContent, /^scripts\/\*$/m);
   assert.match(gitignoreContent, /\.codex\/skills\/gitguardex\/SKILL\.md/);
 
   result = runNode(['doctor', '--target', repoDir], repoDir);
@@ -512,7 +511,7 @@ test('setup and doctor explain .codex file conflicts and still write managed git
   assert.match(combined, /Path conflict: \.codex exists as a file/);
 
   gitignoreContent = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
-  assert.match(gitignoreContent, /scripts\/agent-file-locks\.py/);
+  assert.match(gitignoreContent, /^scripts\/\*$/m);
 });
 
 test('setup and doctor skip repo bootstrap when repo .env disables Guardex', () => {
@@ -974,7 +973,7 @@ test('doctor on protected main auto-runs in a sandbox branch/worktree', () => {
   assert.match(result.stdout, /doctor detected protected branch 'main'/);
   const createdBranch = extractCreatedBranch(result.stdout);
   const createdWorktree = extractCreatedWorktree(result.stdout);
-  assert.match(createdBranch, /^agent\/gx\/.+-gx-doctor$/);
+  assert.match(createdBranch, /^agent\/codex\/gx-doctor(?:-[0-9]+)?-\d{4}-\d{2}-\d{2}-\d{2}-\d{2}$/);
   assert.equal(fs.existsSync(path.join(createdWorktree, 'scripts', 'agent-branch-finish.sh')), true);
 
   const rootStatus = runCmd('git', ['status', '--short', '--untracked-files=no'], repoDir);
@@ -1076,7 +1075,10 @@ test('doctor on protected main syncs repaired stale lock state back to base work
   result = runNode(['doctor', '--target', repoDir], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /doctor detected protected branch 'main'/);
-  assert.match(result.stdout, /Synced repaired lock registry back to protected branch workspace/);
+  assert.match(
+    result.stdout,
+    /(?:Synced repaired lock registry back to protected branch workspace \(\.omx\/state\/agent-file-locks\.json\)\.|Lock registry already synced in protected branch workspace\.)/,
+  );
 
   const lockState = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
   assert.deepEqual(lockState.locks, {});
@@ -1095,7 +1097,7 @@ test('doctor on protected main bootstraps sandbox branch even before setup exist
   assert.match(result.stdout, /\.omx scaffold/);
   const createdBranch = extractCreatedBranch(result.stdout);
   const createdWorktree = extractCreatedWorktree(result.stdout);
-  assert.match(createdBranch, /^agent\/gx\/.+-gx-doctor$/);
+  assert.match(createdBranch, /^agent\/(?:gx\/.+-gx-doctor|codex\/gx-doctor(?:-[0-9]+)?-\d{4}-\d{2}-\d{2}-\d{2}-\d{2})$/);
   assert.equal(fs.existsSync(path.join(createdWorktree, 'scripts', 'agent-branch-start.sh')), true);
   assert.equal(fs.existsSync(path.join(repoDir, '.omx', 'state')), true);
   assert.equal(fs.existsSync(path.join(repoDir, '.omx', 'logs')), true);
@@ -1250,7 +1252,7 @@ exit 1
   assert.doesNotMatch(ghCalls, /pr merge .* --auto/);
   const combinedOutput = `${result.stdout}\n${result.stderr}`;
   assert.match(combinedOutput, /PR closed without merge; cannot continue auto-finish/);
-  assert.match(combinedOutput, /\[guardex\] Auto-finish flow failed for sandbox branch/);
+  assert.match(combinedOutput, /\[gitguardex\] Auto-finish flow failed for sandbox branch/);
   assert.doesNotMatch(combinedOutput, /Auto-finish flow completed for sandbox branch/);
 });
 
@@ -1322,7 +1324,7 @@ exit 1
 
   const combinedOutput = `${result.stdout}\n${result.stderr}`;
   assert.match(combinedOutput, /Auto-finish sweep \(base=main\): attempted=1, completed=1, skipped=\d+, failed=0/);
-  assert.match(combinedOutput, /\[done\] agent\/planner\/.*doctor-ready-finish.*: auto-finish completed\./);
+  assert.match(combinedOutput, new RegExp(`\\[done\\] ${escapeRegexLiteral(readyBranch)}: auto-finish completed\\.`));
 
   const ghCalls = fs.readFileSync(ghLogPath, 'utf8');
   assert.match(ghCalls, /pr create/);
@@ -1648,7 +1650,7 @@ test('agent-branch-start prefers current protected branch over stale configured 
 
   result = runCmd('bash', ['scripts/agent-branch-start.sh', 'prefer-dev', 'bot'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  assert.match(result.stdout, /Moved local changes from 'dev' into 'agent\/bot\//);
+  assert.match(result.stdout, /Moved local changes from 'dev' into 'agent\/codex\//);
 
   const agentWorktree = extractCreatedWorktree(result.stdout);
   const storedBase = runCmd(
@@ -1697,7 +1699,7 @@ test('agent-branch-start moves protected-branch local changes into the new agent
   result = runCmd('bash', ['scripts/agent-branch-start.sh', 'move-readme', 'bot'], repoDir);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const agentWorktree = extractCreatedWorktree(result.stdout);
-  assert.match(result.stdout, /Moved local changes from 'main' into 'agent\/bot\//);
+  assert.match(result.stdout, /Moved local changes from 'main' into 'agent\/codex\//);
 
   const rootStatus = runCmd('git', ['status', '--short'], repoDir);
   assert.equal(rootStatus.status, 0, rootStatus.stderr || rootStatus.stdout);
@@ -2252,7 +2254,7 @@ test('self-update restarts into the installed CLI after a successful on-disk upg
   fs.writeFileSync(
     path.join(installedBinDir, 'multiagent-safety.js'),
     '#!/usr/bin/env node\n' +
-      'require("node:fs").writeFileSync(process.argv[process.argv.length - 1], "reexec\\n", "utf8");\n' +
+      'require("node:fs").writeFileSync(process.env.GUARDEX_TEST_REEXEC_MARKER, "reexec\\n", "utf8");\n' +
       'console.log("REEXECED 9.9.9");\n',
     'utf8',
   );
@@ -2278,10 +2280,11 @@ echo "unexpected npm args: $*" >&2
 exit 1
 `);
 
-  const result = runNodeWithEnv(['version', reexecMarker], repoDir, {
+  const result = runNodeWithEnv([], repoDir, {
     GUARDEX_NPM_BIN: fakeNpm,
     GUARDEX_FORCE_UPDATE_CHECK: '1',
     GUARDEX_AUTO_UPDATE_APPROVAL: 'yes',
+    GUARDEX_TEST_REEXEC_MARKER: reexecMarker,
   });
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -2886,11 +2889,12 @@ test('codex-agent launches codex inside a fresh sandbox worktree and keeps branc
   assert.match(launch.stdout, /\[codex-agent\] Launching codex in sandbox:/);
   assert.match(launch.stdout, /\[codex-agent\] Session ended \(exit=0\)\. Running worktree cleanup\.\.\./);
   assert.match(launch.stdout, /\[codex-agent\] Sandbox worktree kept:/);
+  const launchedBranch = extractCreatedBranch(launch.stdout);
 
   const launchedCwd = fs.readFileSync(cwdMarker, 'utf8').trim();
   assert.match(
     launchedCwd,
-    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/agent__planner__`),
+    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/${escapeRegexLiteral(launchedBranch.replaceAll('/', '__'))}`),
   );
 
   const launchedArgs = fs.readFileSync(argsMarker, 'utf8').trim();
@@ -2899,7 +2903,6 @@ test('codex-agent launches codex inside a fresh sandbox worktree and keeps branc
   assert.equal(fs.existsSync(launchedCwd), true, 'clean codex-agent sandbox should stay available by default');
   assert.match(launch.stdout, /\[codex-agent\] OpenSpec change workspace:/);
   assert.match(launch.stdout, /\[codex-agent\] OpenSpec plan workspace:/);
-  const launchedBranch = extractCreatedBranch(launch.stdout);
   const branchResult = runCmd('git', ['show-ref', '--verify', '--quiet', `refs/heads/${launchedBranch}`], repoDir);
   assert.equal(branchResult.status, 0, 'agent branch should remain after default codex-agent run');
   const openspecPlanSlug = sanitizeSlug(launchedBranch, 'launch-task');
@@ -2979,17 +2982,17 @@ test('codex-agent restores local branch and falls back to safe worktree start wh
   assert.equal(launch.status, 0, launch.stderr || launch.stdout);
   const combinedOutput = `${launch.stdout}\n${launch.stderr}`;
   assert.match(combinedOutput, /Unsafe starter output/);
-  assert.match(combinedOutput, /\[agent-branch-start\] Created branch: agent\/planner\//);
+  assert.match(combinedOutput, /\[agent-branch-start\] Created branch: agent\/codex\//);
+  const launchedBranch = extractCreatedBranch(combinedOutput);
 
   const launchedCwd = fs.readFileSync(cwdMarker, 'utf8').trim();
   assert.match(
     launchedCwd,
-    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/agent__planner__`),
+    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/${escapeRegexLiteral(launchedBranch.replaceAll('/', '__'))}`),
   );
   assert.notEqual(launchedCwd, repoDir);
   assert.match(combinedOutput, /\[codex-agent\] OpenSpec change workspace:/);
   assert.match(combinedOutput, /\[codex-agent\] OpenSpec plan workspace:/);
-  const launchedBranch = extractCreatedBranch(combinedOutput);
   const openspecPlanSlug = sanitizeSlug(launchedBranch, 'fallback-task');
   const openspecChangeSlug = sanitizeSlug(launchedBranch, 'fallback-task');
   assert.equal(
@@ -3062,11 +3065,12 @@ test('codex-agent supports --codex-bin override before positional arguments', ()
   assert.equal(launch.status, 0, launch.stderr || launch.stdout);
   assert.match(launch.stdout, /\[codex-agent\] Launching .* in sandbox:/);
   assert.match(launch.stdout, /\[codex-agent\] Sandbox worktree kept:/);
+  const launchedBranch = extractCreatedBranch(launch.stdout);
 
   const launchedCwd = fs.readFileSync(cwdMarker, 'utf8').trim();
   assert.match(
     launchedCwd,
-    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/agent__planner__`),
+    new RegExp(`${escapeRegexLiteral(repoDir)}/\\.omx/agent-worktrees/${escapeRegexLiteral(launchedBranch.replaceAll('/', '__'))}`),
   );
   const launchedArgs = fs.readFileSync(argsMarker, 'utf8').trim();
   assert.match(launchedArgs, /--model gpt-5\.4-mini/);

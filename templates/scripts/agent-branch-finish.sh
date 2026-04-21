@@ -156,9 +156,14 @@ if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -z "$BASE_BRANCH" ]]; then
 fi
 
 if [[ "$BASE_BRANCH_EXPLICIT" -eq 0 ]]; then
-  configured_base="$(git -C "$repo_root" config --get multiagent.baseBranch || true)"
-  if [[ -n "$configured_base" ]]; then
-    BASE_BRANCH="$configured_base"
+  stored_branch_base="$(git -C "$repo_root" config --get "branch.${SOURCE_BRANCH}.guardexBase" || true)"
+  if [[ -n "$stored_branch_base" ]]; then
+    BASE_BRANCH="$stored_branch_base"
+  else
+    configured_base="$(git -C "$repo_root" config --get multiagent.baseBranch || true)"
+    if [[ -n "$configured_base" ]]; then
+      BASE_BRANCH="$configured_base"
+    fi
   fi
 fi
 

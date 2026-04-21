@@ -488,6 +488,45 @@ function gitRun(repoRoot, args, { allowFailure = false } = {}) {
   return result;
 }
 
+function trackedStatusByPath(repoRoot) {
+  const result = gitRun(repoRoot, ['status', '--short', '--untracked-files=no', '--porcelain']);
+  const statuses = new Map();
+  const lines = String(result.stdout || '')
+    .split('\n')
+    .map((line) => line.trimEnd())
+    .filter(Boolean);
+  for (const line of lines) {
+    if (line.length < 4) {
+      continue;
+    }
+    statuses.set(line.slice(3), line.slice(0, 2));
+  }
+  return statuses;
+}
+
+function restoreTrackedWorktreePaths(repoRoot, relativePaths) {
+  const uniquePaths = [...new Set(relativePaths.filter(Boolean))];
+  if (uniquePaths.length === 0) {
+    return;
+  }
+
+  let result = gitRun(
+    repoRoot,
+    ['restore', '--worktree', '--source=HEAD', '--', ...uniquePaths],
+    { allowFailure: true },
+  );
+  if (result.status === 0) {
+    return;
+  }
+
+  result = gitRun(repoRoot, ['checkout', '--', ...uniquePaths], { allowFailure: true });
+  if (result.status !== 0) {
+    throw new Error(
+      `Unable to restore tracked protected-base paths: ${(result.stderr || '').trim() || (result.stdout || '').trim()}`,
+    );
+  }
+}
+
 function resolveRepoRoot(targetPath) {
   const resolvedTarget = path.resolve(targetPath || process.cwd());
   const result = run('git', ['-C', resolvedTarget, 'rev-parse', '--show-toplevel']);
@@ -1757,13 +1796,28 @@ function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
 }
 
 function syncProtectedBaseDoctorRepairs(options, blocked) {
+  const trackedStatusBefore = options.dryRun ? new Map() : trackedStatusByPath(blocked.repoRoot);
   const fixPayload = runFixInternal({
     ...options,
     target: blocked.repoRoot,
     allowProtectedBaseWrite: true,
   });
+  const revertedTrackedPaths = [];
+  if (!options.dryRun) {
+    const trackedStatusAfter = trackedStatusByPath(blocked.repoRoot);
+    for (const [filePath] of trackedStatusAfter.entries()) {
+      if (!trackedStatusBefore.has(filePath)) {
+        revertedTrackedPaths.push(filePath);
+      }
+    }
+    restoreTrackedWorktreePaths(blocked.repoRoot, revertedTrackedPaths);
+  }
+
+  const revertedTrackedSet = new Set(revertedTrackedPaths);
   const changedOperations = fixPayload.operations.filter(
-    (operation) => !['unchanged', 'skipped'].includes(operation.status),
+    (operation) =>
+      !['unchanged', 'skipped'].includes(operation.status) &&
+      !revertedTrackedSet.has(operation.file),
   );
   const hookChanged = fixPayload.hookResult?.status && fixPayload.hookResult.status !== 'unchanged';
   const changedCount = changedOperations.length + (hookChanged ? 1 : 0);
@@ -1771,15 +1825,22 @@ function syncProtectedBaseDoctorRepairs(options, blocked) {
   if (changedCount === 0) {
     return {
       status: 'unchanged',
-      note: 'managed repair files already aligned in protected branch workspace',
+      note: revertedTrackedPaths.length > 0
+        ? 'only tracked protected-branch files changed and were restored'
+        : 'managed repair files already aligned in protected branch workspace',
       fixPayload,
+      revertedTrackedPaths,
     };
   }
 
+  const revertedNote = revertedTrackedPaths.length > 0
+    ? `; restored ${revertedTrackedPaths.length} tracked file(s) to keep the protected checkout clean`
+    : '';
   return {
     status: options.dryRun ? 'would-sync' : 'synced',
-    note: `${options.dryRun ? 'would sync' : 'synced'} ${changedCount} managed repair item(s)`,
+    note: `${options.dryRun ? 'would sync' : 'synced'} ${changedCount} managed repair item(s)${revertedNote}`,
     fixPayload,
+    revertedTrackedPaths,
   };
 }
 
