@@ -26,10 +26,16 @@ jobs:
       SOURCE_PREFIX: frontend
       SYNC_TOKEN: ${{ secrets.GUARDEX_FRONTEND_MIRROR_PAT }}
     steps:
+      - name: Skip when mirror PAT is missing
+        if: ${{ env.SYNC_TOKEN == '' }}
+        run: echo "GUARDEX_FRONTEND_MIRROR_PAT is not configured; skipping frontend mirror sync."
+
       - name: Checkout
+        if: ${{ env.SYNC_TOKEN != '' }}
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Sync frontend subtree to mirror repo
+        if: ${{ env.SYNC_TOKEN != '' }}
         run: bash scripts/sync-frontend-mirror.sh

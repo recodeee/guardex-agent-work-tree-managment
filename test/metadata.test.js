@@ -75,6 +75,16 @@ test('code review workflow does not gate startup on secrets context', () => {
   assert.match(workflow, /if:\s+\$\{\{\s*env\.OPENAI_API_KEY != ''\s*\}\}/);
 });
 
+test('frontend mirror workflow skips cleanly when the mirror PAT is missing', () => {
+  const workflowPath = path.join(repoRoot, '.github', 'workflows', 'sync-frontend-mirror.yml');
+  const workflow = fs.readFileSync(workflowPath, 'utf8');
+  assert.doesNotMatch(workflow, /if:\s+\$\{\{\s*secrets\.GUARDEX_FRONTEND_MIRROR_PAT/);
+  assert.match(workflow, /SYNC_TOKEN:\s+\$\{\{\s*secrets\.GUARDEX_FRONTEND_MIRROR_PAT\s*\}\}/);
+  assert.match(workflow, /name:\s+Skip when mirror PAT is missing/);
+  assert.match(workflow, /if:\s+\$\{\{\s*env\.SYNC_TOKEN == ''\s*\}\}/);
+  assert.match(workflow, /if:\s+\$\{\{\s*env\.SYNC_TOKEN != ''\s*\}\}/);
+});
+
 test('critical runtime helper scripts stay in sync with templates', () => {
   const pairs = [
     ['templates/scripts/codex-agent.sh', 'scripts/codex-agent.sh'],
