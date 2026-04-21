@@ -123,12 +123,11 @@ shorten_slug() {
   printf '%s' "$shortened"
 }
 
-# Collapse arbitrary agent identifiers to a clean role token: claude | codex |
-# <other-kebab>. Priority: GUARDEX_AGENT_TYPE env override, then the raw
-# AGENT_NAME (if it contains 'claude' or 'codex'), then CLAUDECODE=1 sentinel
-# (set by Claude Code CLI), else fall back to 'codex'. Any other role name
-# (integrator, executor, rust-port, etc.) is preserved as-is after slug
-# sanitization.
+# Collapse arbitrary agent identifiers to a clean role token. Priority:
+# GUARDEX_AGENT_TYPE env override, then recognizable claude/codex aliases, then
+# a small legacy compatibility set, then the literal requested role after slug
+# sanitization. This preserves explicit roles such as planner/executor while
+# keeping the older bot -> codex fallback stable for existing callers.
 normalize_role() {
   local raw_agent="$1"
   local override="${GUARDEX_AGENT_TYPE:-}"
@@ -150,10 +149,13 @@ normalize_role() {
     printf 'claude'
     return 0
   fi
-  # Unrecognized raw name (rust-port-lead, some-worker, empty, ...): default to
-  # codex. To get a different role (integrator, executor, ...) pass the role
-  # explicitly via GUARDEX_AGENT_TYPE, handled above.
-  printf 'codex'
+  local sanitized
+  sanitized="$(sanitize_slug "$raw_agent" "codex")"
+  if [[ "$sanitized" == "bot" ]]; then
+    printf 'codex'
+    return 0
+  fi
+  printf '%s' "$sanitized"
 }
 
 # Timestamp the branch/worktree/openspec slug so parallel agents never collide

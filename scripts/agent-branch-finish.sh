@@ -156,15 +156,25 @@ if [[ "$BASE_BRANCH_EXPLICIT" -eq 1 && -z "$BASE_BRANCH" ]]; then
 fi
 
 if [[ "$BASE_BRANCH_EXPLICIT" -eq 0 ]]; then
-  stored_branch_base="$(git -C "$repo_root" config --get "branch.${SOURCE_BRANCH}.guardexBase" || true)"
-  if [[ -n "$stored_branch_base" ]]; then
-    BASE_BRANCH="$stored_branch_base"
+  source_branch_base="$(git -C "$repo_root" config --get "branch.${SOURCE_BRANCH}.guardexBase" || true)"
+  if [[ -n "$source_branch_base" ]]; then
+    BASE_BRANCH="$source_branch_base"
   else
     configured_base="$(git -C "$repo_root" config --get multiagent.baseBranch || true)"
     if [[ -n "$configured_base" ]]; then
       BASE_BRANCH="$configured_base"
     fi
   fi
+fi
+
+if [[ -z "$BASE_BRANCH" ]]; then
+  for fallback_branch in dev main master; do
+    if git -C "$repo_root" show-ref --verify --quiet "refs/heads/${fallback_branch}" \
+      || git -C "$repo_root" show-ref --verify --quiet "refs/remotes/origin/${fallback_branch}"; then
+      BASE_BRANCH="$fallback_branch"
+      break
+    fi
+  done
 fi
 
 if [[ -z "$BASE_BRANCH" ]]; then
@@ -273,8 +283,17 @@ if [[ "$should_require_sync" -eq 1 ]] && git -C "$repo_root" show-ref --verify -
   fi
 fi
 
-integration_worktree="${agent_worktree_root}/__integrate-${BASE_BRANCH//\//__}-$(date +%Y%m%d-%H%M%S)"
-integration_branch="__agent_integrate_${BASE_BRANCH//\//_}_$(date +%Y%m%d_%H%M%S)"
+integration_stamp="$(date +%Y%m%d-%H%M%S)"
+integration_worktree_base="${agent_worktree_root}/__integrate-${BASE_BRANCH//\//__}-${integration_stamp}"
+integration_branch_base="__agent_integrate_${BASE_BRANCH//\//_}_$(date +%Y%m%d_%H%M%S)"
+integration_worktree="$integration_worktree_base"
+integration_branch="$integration_branch_base"
+integration_suffix=1
+while [[ -e "$integration_worktree" ]] || git -C "$repo_root" show-ref --verify --quiet "refs/heads/${integration_branch}"; do
+  integration_worktree="${integration_worktree_base}-${integration_suffix}"
+  integration_branch="${integration_branch_base}_${integration_suffix}"
+  integration_suffix=$((integration_suffix + 1))
+done
 mkdir -p "$(dirname "$integration_worktree")"
 
 git -C "$repo_root" worktree add "$integration_worktree" "$start_ref" >/dev/null

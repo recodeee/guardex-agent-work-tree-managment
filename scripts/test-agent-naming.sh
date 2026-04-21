@@ -5,8 +5,9 @@
 #   agent/<role>/<task-slug>-<YYYY-MM-DD>-<HH-MM>
 #
 # Where:
-#   - role ∈ {claude, codex} for the common case, or any sanitized role token
-#     (integrator, executor, rust-port, ...) when passed via GUARDEX_AGENT_TYPE.
+#   - role ∈ {claude, codex} for the common case, or any sanitized explicit role
+#     token (integrator, executor, rust-port, ...) when passed directly or via
+#     GUARDEX_AGENT_TYPE. The legacy name "bot" still falls back to codex.
 #   - task-slug is the user-provided task name, lowercased + kebab-cased.
 #   - timestamp is local YYYY-MM-DD-HH-MM; colons are forbidden in git refs, so
 #     the HH:MM the user sees is stored as HH-MM in the slug.
@@ -101,8 +102,8 @@ assert_eq "neutral name + CLAUDECODE=1 → claude" \
   "$actual" "agent/claude/task4-${STAMP}"
 
 actual="$(run_name_only task5 rust-port-lead)"
-assert_eq "neutral name + no env → codex default" \
-  "$actual" "agent/codex/task5-${STAMP}"
+assert_eq "neutral explicit name stays preserved" \
+  "$actual" "agent/rust-port-lead/task5-${STAMP}"
 
 actual="$(run_name_only task6 claude GUARDEX_AGENT_TYPE=codex)"
 assert_eq "GUARDEX_AGENT_TYPE=codex overrides claude arg" \

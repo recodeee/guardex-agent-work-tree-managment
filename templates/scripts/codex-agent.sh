@@ -249,6 +249,35 @@ resolve_start_ref() {
   return 1
 }
 
+origin_remote_looks_like_github() {
+  local wt="$1"
+  local origin_url=""
+  origin_url="$(git -C "$wt" remote get-url origin 2>/dev/null || true)"
+  [[ -n "$origin_url" && "$origin_url" =~ github\.com[:/] ]]
+}
+
+auto_finish_context_is_ready() {
+  local wt="$1"
+  local gh_bin="${GUARDEX_GH_BIN:-gh}"
+
+  if ! git -C "$wt" remote get-url origin >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! command -v "$gh_bin" >/dev/null 2>&1; then
+    return 1
+  fi
+
+  if [[ -n "${GUARDEX_GH_BIN:-}" ]]; then
+    return 0
+  fi
+
+  if ! origin_remote_looks_like_github "$wt"; then
+    return 1
+  fi
+
+  "$gh_bin" auth status >/dev/null 2>&1
+}
+
 restore_repo_branch_if_changed() {
   local expected_branch="$1"
   if [[ -z "$expected_branch" || "$expected_branch" == "HEAD" ]]; then
@@ -780,7 +809,9 @@ if [[ "$AUTO_FINISH" -eq 1 && -n "$worktree_branch" && "$worktree_branch" != "HE
   else
     echo "[codex-agent] Auto-finish enabled: commit -> push/PR -> merge (keep branch/worktree)."
   fi
-  if auto_commit_worktree_changes "$worktree_path" "$worktree_branch"; then
+  if ! auto_finish_context_is_ready "$worktree_path"; then
+    echo "[codex-agent] Auto-finish skipped for '${worktree_branch}' (no mergeable remote context)." >&2
+  elif auto_commit_worktree_changes "$worktree_path" "$worktree_branch"; then
     if run_finish_flow "$worktree_path" "$worktree_branch"; then
       auto_finish_completed=1
       echo "[codex-agent] Auto-finish completed for '${worktree_branch}'."
