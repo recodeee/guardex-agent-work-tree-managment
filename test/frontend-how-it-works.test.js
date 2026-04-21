@@ -6,14 +6,15 @@ const path = require('node:path')
 const repoRoot = path.resolve(__dirname, '..')
 const frontendRoot = path.join(repoRoot, 'frontend')
 
-test('frontend package exposes standard Next.js scripts', () => {
+test('frontend package exposes the documented Next.js plus custom server scripts', () => {
   const packageJson = JSON.parse(
     fs.readFileSync(path.join(frontendRoot, 'package.json'), 'utf8')
   )
 
   assert.equal(packageJson.scripts.dev, 'next dev')
   assert.equal(packageJson.scripts.build, 'next build')
-  assert.equal(packageJson.scripts.start, 'next start')
+  assert.equal(packageJson.main, 'server.js')
+  assert.equal(packageJson.scripts.start, 'node server.js')
 })
 
 test('how-it-works page keeps key workflow copy blocks', () => {
