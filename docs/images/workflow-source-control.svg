@@ -1,113 +1,229 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="900" viewBox="0 0 1400 900" role="img" aria-labelledby="title desc">
   <title id="title">VS Code source control view with agent branches and OpenSpec files</title>
-  <desc id="desc">A frontend-style source control layout showing two active agent branches. Each branch change list includes OpenSpec tasks.md and spec.md files along with implementation files.</desc>
+  <desc id="desc">A VS Code inspired source control window with two active agent branches, an editor tab, and OpenSpec task and spec files listed beside implementation files.</desc>
 
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0b111b"/>
-      <stop offset="100%" stop-color="#101a2a"/>
+    <linearGradient id="page-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0c111b"/>
+      <stop offset="100%" stop-color="#151c29"/>
     </linearGradient>
-    <linearGradient id="topbar" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#1c2332"/>
-      <stop offset="100%" stop-color="#151b28"/>
+    <linearGradient id="titlebar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#1f1f1f"/>
+      <stop offset="100%" stop-color="#181818"/>
     </linearGradient>
+    <linearGradient id="base-row" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2a2d2e"/>
+      <stop offset="100%" stop-color="#232526"/>
+    </linearGradient>
+    <linearGradient id="card-blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1d2531"/>
+      <stop offset="100%" stop-color="#17202b"/>
+    </linearGradient>
+    <linearGradient id="card-violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#262032"/>
+      <stop offset="100%" stop-color="#1d1d2b"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#04070d" flood-opacity="0.45"/>
+    </filter>
   </defs>
 
-  <rect width="1280" height="820" fill="url(#bg)"/>
-  <rect x="0" y="0" width="1280" height="40" fill="url(#topbar)"/>
-  <text x="18" y="26" fill="#d6e3ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="14" font-weight="600">VS CODE</text>
-  <text x="86" y="26" fill="#7dd3fc" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="13">LIVE</text>
-  <text x="1120" y="26" fill="#8da2c9" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">recodee — Source Control</text>
+  <rect width="1400" height="900" fill="url(#page-bg)"/>
+  <rect x="40" y="30" width="1320" height="840" rx="18" fill="#1e1e1e" filter="url(#shadow)"/>
 
-  <rect x="0" y="40" width="52" height="780" fill="#0e1523"/>
-  <circle cx="26" cy="72" r="8" fill="#3b82f6"/>
-  <circle cx="26" cy="112" r="8" fill="#64748b"/>
-  <circle cx="26" cy="152" r="8" fill="#64748b"/>
-  <circle cx="26" cy="192" r="8" fill="#22c55e"/>
+  <rect x="40" y="30" width="1320" height="46" rx="18" fill="url(#titlebar)"/>
+  <rect x="40" y="58" width="1320" height="18" fill="#181818"/>
+  <circle cx="68" cy="53" r="6" fill="#f87171"/>
+  <circle cx="88" cy="53" r="6" fill="#fbbf24"/>
+  <circle cx="108" cy="53" r="6" fill="#34d399"/>
+  <text x="140" y="58" fill="#c5c5c5" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="14">File   Edit   Selection   View   Go   Run   Terminal   Help</text>
+  <rect x="565" y="40" width="270" height="24" rx="8" fill="#2a2a2a" stroke="#343434"/>
+  <circle cx="588" cy="52" r="5" fill="none" stroke="#8a8a8a" stroke-width="1.6"/>
+  <line x1="592" y1="56" x2="598" y2="62" stroke="#8a8a8a" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="610" y="57" fill="#9d9d9d" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">agent worktrees</text>
+  <text x="1130" y="58" fill="#c5c5c5" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">recodee - gitguardex - VS Code</text>
 
-  <rect x="52" y="40" width="440" height="780" fill="#111826"/>
-  <text x="72" y="72" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13" font-weight="700">SOURCE CONTROL</text>
+  <rect x="40" y="76" width="56" height="768" fill="#252526"/>
+  <rect x="40" y="166" width="3" height="28" rx="1.5" fill="#3794ff"/>
+  <g stroke-linecap="round" stroke-linejoin="round" fill="none">
+    <path d="M56 98l14-12 6 2v28l-6 2-14-12 8-4-8-4z" stroke="#858585" stroke-width="1.8"/>
+    <circle cx="67" cy="147" r="7" stroke="#858585" stroke-width="1.8"/>
+    <line x1="72" y1="152" x2="78" y2="158" stroke="#858585" stroke-width="1.8"/>
+    <circle cx="63" cy="176" r="4.5" stroke="#3794ff" stroke-width="1.8"/>
+    <circle cx="76" cy="164" r="4.5" stroke="#3794ff" stroke-width="1.8"/>
+    <circle cx="76" cy="188" r="4.5" stroke="#3794ff" stroke-width="1.8"/>
+    <line x1="66.5" y1="173.5" x2="72.5" y2="166.5" stroke="#3794ff" stroke-width="1.8"/>
+    <line x1="66.5" y1="178.5" x2="72.5" y2="185.5" stroke="#3794ff" stroke-width="1.8"/>
+    <path d="M60 224h18l6 7v22H60z" stroke="#858585" stroke-width="1.8"/>
+    <path d="M84 231h12" stroke="#858585" stroke-width="1.8"/>
+    <path d="M59 274h26l-7-7m7 7-7 7" stroke="#858585" stroke-width="1.8"/>
+    <rect x="59" y="318" width="25" height="25" rx="5" stroke="#858585" stroke-width="1.8"/>
+    <path d="M66 350l-3 7h18l-3-7" stroke="#858585" stroke-width="1.8"/>
+    <circle cx="72" cy="378" r="10" stroke="#858585" stroke-width="1.8"/>
+    <circle cx="72" cy="809" r="10" stroke="#858585" stroke-width="1.8"/>
+  </g>
+  <rect x="73" y="181" width="16" height="16" rx="8" fill="#3794ff"/>
+  <text x="81" y="192" text-anchor="middle" fill="#ffffff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="10" font-weight="700">2</text>
 
-  <rect x="66" y="86" width="410" height="38" rx="8" fill="#1a2437" stroke="#2a3851"/>
-  <text x="80" y="110" fill="#9fb5d8" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">dev</text>
-  <text x="170" y="110" fill="#6d829f" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">base · clean</text>
-  <text x="80" y="142" fill="#6f849f" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="11">Baseline branch — no agent activity</text>
+  <rect x="96" y="76" width="352" height="768" fill="#1f1f1f"/>
+  <rect x="448" y="76" width="1" height="768" fill="#333333"/>
 
-  <rect x="66" y="166" width="410" height="248" rx="10" fill="#13233a" stroke="#2563eb"/>
-  <text x="80" y="190" fill="#9ec5ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">agent_codex__dashboard-triage</text>
-  <rect x="432" y="175" width="30" height="18" rx="9" fill="#1d4ed8"/>
-  <text x="447" y="188" text-anchor="middle" fill="#dbeafe" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="10">5</text>
+  <text x="118" y="112" fill="#cccccc" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13" font-weight="700" letter-spacing="0.08em">SOURCE CONTROL</text>
+  <text x="410" y="112" fill="#858585" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">...</text>
 
-  <text x="80" y="214" fill="#8ca6c9" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="11">▾ Changes</text>
-  <text x="80" y="238" fill="#93c5fd" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">TS</text>
-  <text x="112" y="238" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">feature-flags.ts</text>
-  <text x="452" y="238" text-anchor="end" fill="#fbbf24" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">M</text>
+  <rect x="118" y="132" width="308" height="42" rx="8" fill="url(#base-row)" stroke="#373737"/>
+  <circle cx="138" cy="153" r="5" fill="#4ade80"/>
+  <text x="154" y="158" fill="#d4d4d4" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="14" font-weight="600">dev</text>
+  <text x="204" y="158" fill="#8a8a8a" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">base branch - clean</text>
+  <text x="118" y="194" fill="#7f848e" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Baseline branch. No agent activity.</text>
 
-  <text x="80" y="260" fill="#f87171" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">RS</text>
-  <text x="112" y="260" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">reader.rs</text>
-  <text x="452" y="260" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+  <rect x="118" y="220" width="308" height="222" rx="12" fill="url(#card-blue)" stroke="#2f5d8e"/>
+  <rect x="118" y="220" width="4" height="222" rx="2" fill="#3794ff"/>
+  <text x="136" y="250" fill="#d7e9ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="13">agent_codex__dashboard-triage</text>
+  <text x="136" y="273" fill="#8ba0ba" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">v Changes</text>
+  <rect x="390" y="236" width="20" height="18" rx="9" fill="#2b6cb0"/>
+  <text x="400" y="249" text-anchor="middle" fill="#eaf4ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="11" font-weight="700">5</text>
 
-  <text x="80" y="282" fill="#f87171" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">RS</text>
-  <text x="112" y="282" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">mod.rs</text>
-  <text x="452" y="282" text-anchor="end" fill="#fbbf24" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">M</text>
+  <g font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">
+    <rect x="136" y="289" width="10" height="12" rx="2" fill="#3178c6"/>
+    <path d="M143 289v4h3" fill="none" stroke="#89c4ff" stroke-width="1"/>
+    <text x="156" y="299" fill="#d4d4d4">feature-flags.ts</text>
+    <text x="400" y="299" text-anchor="end" fill="#ffd166">M</text>
 
-  <text x="80" y="306" fill="#a78bfa" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">OS</text>
-  <text x="112" y="306" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">openspec/changes/agent-codex-dashboard-triage/tasks.md</text>
-  <text x="452" y="306" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+    <rect x="136" y="317" width="10" height="12" rx="2" fill="#dea584"/>
+    <path d="M143 317v4h3" fill="none" stroke="#ffe1c7" stroke-width="1"/>
+    <text x="156" y="327" fill="#d4d4d4">reader.rs</text>
+    <text x="400" y="327" text-anchor="end" fill="#89d185">U</text>
 
-  <text x="80" y="328" fill="#a78bfa" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">OS</text>
-  <text x="112" y="328" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">openspec/changes/agent-codex-dashboard-triage/specs/.../spec.md</text>
-  <text x="452" y="328" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+    <rect x="136" y="345" width="10" height="12" rx="2" fill="#dea584"/>
+    <path d="M143 345v4h3" fill="none" stroke="#ffe1c7" stroke-width="1"/>
+    <text x="156" y="355" fill="#d4d4d4">mod.rs</text>
+    <text x="400" y="355" text-anchor="end" fill="#ffd166">M</text>
 
-  <rect x="66" y="432" width="410" height="248" rx="10" fill="#1e1933" stroke="#6366f1"/>
-  <text x="80" y="456" fill="#c4b5fd" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">agent_claude__loader-parallel</text>
-  <rect x="432" y="441" width="30" height="18" rx="9" fill="#4f46e5"/>
-  <text x="447" y="454" text-anchor="middle" fill="#e0e7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="10">5</text>
+    <rect x="136" y="373" width="10" height="12" rx="2" fill="#58a6ff"/>
+    <path d="M143 373v4h3" fill="none" stroke="#d6ebff" stroke-width="1"/>
+    <text x="156" y="383" fill="#d4d4d4">openspec/changes/.../tasks.md</text>
+    <text x="400" y="383" text-anchor="end" fill="#89d185">U</text>
 
-  <text x="80" y="480" fill="#a6a7e8" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="11">▾ Changes</text>
-  <text x="80" y="504" fill="#93c5fd" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">TSX</text>
-  <text x="122" y="504" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">loading-overlay.tsx</text>
-  <text x="452" y="504" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+    <rect x="136" y="401" width="10" height="12" rx="2" fill="#58a6ff"/>
+    <path d="M143 401v4h3" fill="none" stroke="#d6ebff" stroke-width="1"/>
+    <text x="156" y="411" fill="#d4d4d4">openspec/changes/.../spec.md</text>
+    <text x="400" y="411" text-anchor="end" fill="#89d185">U</text>
+  </g>
 
-  <text x="80" y="526" fill="#93c5fd" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">TSX</text>
-  <text x="122" y="526" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">spinner.tsx</text>
-  <text x="452" y="526" text-anchor="end" fill="#fbbf24" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">M</text>
+  <rect x="118" y="468" width="308" height="222" rx="12" fill="url(#card-violet)" stroke="#6b61c9"/>
+  <rect x="118" y="468" width="4" height="222" rx="2" fill="#8b7cf6"/>
+  <text x="136" y="498" fill="#efe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="13">agent_claude__loader-parallel</text>
+  <text x="136" y="521" fill="#aea9d8" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">v Changes</text>
+  <rect x="390" y="484" width="20" height="18" rx="9" fill="#5b4bc2"/>
+  <text x="400" y="497" text-anchor="middle" fill="#f2efff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="11" font-weight="700">5</text>
 
-  <text x="80" y="548" fill="#93c5fd" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">TS</text>
-  <text x="122" y="548" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">navigation-loader.ts</text>
-  <text x="452" y="548" text-anchor="end" fill="#fbbf24" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">M</text>
+  <g font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">
+    <rect x="136" y="537" width="10" height="12" rx="2" fill="#3178c6"/>
+    <path d="M143 537v4h3" fill="none" stroke="#89c4ff" stroke-width="1"/>
+    <text x="156" y="547" fill="#d4d4d4">loading-overlay.tsx</text>
+    <text x="400" y="547" text-anchor="end" fill="#89d185">U</text>
 
-  <text x="80" y="572" fill="#a78bfa" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">OS</text>
-  <text x="122" y="572" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">openspec/changes/agent-claude-loader-parallel/tasks.md</text>
-  <text x="452" y="572" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+    <rect x="136" y="565" width="10" height="12" rx="2" fill="#3178c6"/>
+    <path d="M143 565v4h3" fill="none" stroke="#89c4ff" stroke-width="1"/>
+    <text x="156" y="575" fill="#d4d4d4">spinner.tsx</text>
+    <text x="400" y="575" text-anchor="end" fill="#ffd166">M</text>
 
-  <text x="80" y="594" fill="#a78bfa" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">OS</text>
-  <text x="122" y="594" fill="#dbe7ff" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">openspec/changes/agent-claude-loader-parallel/specs/.../spec.md</text>
-  <text x="452" y="594" text-anchor="end" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="11">U</text>
+    <rect x="136" y="593" width="10" height="12" rx="2" fill="#3178c6"/>
+    <path d="M143 593v4h3" fill="none" stroke="#89c4ff" stroke-width="1"/>
+    <text x="156" y="603" fill="#d4d4d4">navigation-loader.ts</text>
+    <text x="400" y="603" text-anchor="end" fill="#ffd166">M</text>
 
-  <rect x="512" y="56" width="748" height="744" rx="12" fill="#0f1728" stroke="#25344d"/>
-  <rect x="528" y="74" width="716" height="38" rx="8" fill="#17233a"/>
-  <text x="544" y="98" fill="#8db0de" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">TSX  loading-overlay.tsx</text>
+    <rect x="136" y="621" width="10" height="12" rx="2" fill="#58a6ff"/>
+    <path d="M143 621v4h3" fill="none" stroke="#d6ebff" stroke-width="1"/>
+    <text x="156" y="631" fill="#d4d4d4">openspec/changes/.../tasks.md</text>
+    <text x="400" y="631" text-anchor="end" fill="#89d185">U</text>
 
-  <text x="548" y="152" fill="#38bdf8" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="14">+ const shouldRender = !navigationSettled &amp;&amp; !suppressLoaderFlash</text>
-  <text x="548" y="182" fill="#38bdf8" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="14">+ return shouldRender ? &lt;OverlaySpinner /&gt; : null</text>
-  <text x="548" y="212" fill="#38bdf8" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="14">+ setTimeout(() =&gt; setSuppressLoaderFlash(true), 140)</text>
+    <rect x="136" y="649" width="10" height="12" rx="2" fill="#58a6ff"/>
+    <path d="M143 649v4h3" fill="none" stroke="#d6ebff" stroke-width="1"/>
+    <text x="156" y="659" fill="#d4d4d4">openspec/changes/.../spec.md</text>
+    <text x="400" y="659" text-anchor="end" fill="#89d185">U</text>
+  </g>
 
-  <rect x="528" y="250" width="716" height="1" fill="#2d3f61"/>
-  <text x="548" y="288" fill="#9bb2d6" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13">Both agent branches now show OpenSpec artifacts inside Changes:</text>
-  <text x="548" y="312" fill="#d2def4" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">- openspec/changes/&lt;agent-branch&gt;/tasks.md</text>
-  <text x="548" y="336" fill="#d2def4" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">- openspec/changes/&lt;agent-branch&gt;/specs/&lt;capability&gt;/spec.md</text>
+  <rect x="449" y="76" width="911" height="742" fill="#1e1e1e"/>
+  <rect x="449" y="76" width="911" height="38" fill="#252526"/>
+  <rect x="467" y="84" width="188" height="29" rx="6" fill="#1e1e1e" stroke="#333333"/>
+  <text x="485" y="103" fill="#cccccc" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13">loading-overlay.tsx</text>
+  <text x="1178" y="101" fill="#858585" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">TSX</text>
 
-  <rect x="528" y="368" width="716" height="384" rx="10" fill="#111b2d" stroke="#2a3d5a"/>
-  <text x="548" y="396" fill="#8db0de" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Why this matters</text>
-  <text x="548" y="422" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13">The frontend tutorial now communicates that implementation files and OpenSpec</text>
-  <text x="548" y="444" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="13">change artifacts are created together in each agent lane.</text>
+  <rect x="449" y="114" width="911" height="704" fill="#1e1e1e"/>
+  <rect x="449" y="114" width="48" height="704" fill="#181818"/>
+  <rect x="497" y="114" width="1" height="704" fill="#2d2d30"/>
+  <rect x="1288" y="136" width="10" height="642" rx="5" fill="#252526"/>
+  <rect x="1289.5" y="252" width="7" height="150" rx="3.5" fill="#3e3e42"/>
 
-  <text x="548" y="478" fill="#8db0de" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Legend</text>
-  <text x="548" y="502" fill="#4ade80" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">U</text>
-  <text x="566" y="502" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Untracked/new in this branch</text>
-  <text x="548" y="524" fill="#fbbf24" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">M</text>
-  <text x="566" y="524" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Modified file</text>
-  <text x="548" y="546" fill="#a78bfa" font-family="'JetBrains Mono', 'Consolas', monospace" font-size="12">OS</text>
-  <text x="576" y="546" fill="#dbe7ff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">OpenSpec change artifact</text>
+  <g font-family="'JetBrains Mono', 'Consolas', monospace" font-size="16">
+    <text x="482" y="174" text-anchor="end" fill="#6e7681">18</text>
+    <text x="482" y="212" text-anchor="end" fill="#6e7681">19</text>
+    <text x="482" y="250" text-anchor="end" fill="#6e7681">20</text>
+    <text x="482" y="288" text-anchor="end" fill="#6e7681">21</text>
+    <text x="482" y="326" text-anchor="end" fill="#6e7681">22</text>
+    <text x="482" y="364" text-anchor="end" fill="#6e7681">23</text>
+    <text x="482" y="402" text-anchor="end" fill="#6e7681">24</text>
+    <text x="482" y="440" text-anchor="end" fill="#6e7681">25</text>
+  </g>
+
+  <rect x="506" y="148" width="760" height="34" fill="#133b2c"/>
+  <rect x="506" y="186" width="760" height="34" fill="#133b2c"/>
+  <rect x="506" y="224" width="760" height="34" fill="#133b2c"/>
+  <rect x="498" y="148" width="5" height="34" fill="#3fb950"/>
+  <rect x="498" y="186" width="5" height="34" fill="#3fb950"/>
+  <rect x="498" y="224" width="5" height="34" fill="#3fb950"/>
+
+  <g font-family="'JetBrains Mono', 'Consolas', monospace" font-size="17">
+    <text x="522" y="171" fill="#569cd6">const</text>
+    <text x="578" y="171" fill="#9cdcfe">shouldRender</text>
+    <text x="696" y="171" fill="#d4d4d4">=</text>
+    <text x="714" y="171" fill="#dcdcaa">!navigationSettled</text>
+    <text x="900" y="171" fill="#d4d4d4">&amp;&amp;</text>
+    <text x="940" y="171" fill="#dcdcaa">!suppressLoaderFlash</text>
+
+    <text x="522" y="209" fill="#c586c0">return</text>
+    <text x="587" y="209" fill="#9cdcfe">shouldRender</text>
+    <text x="705" y="209" fill="#d4d4d4">?</text>
+    <text x="726" y="209" fill="#4ec9b0">&lt;OverlaySpinner /&gt;</text>
+    <text x="942" y="209" fill="#d4d4d4">:</text>
+    <text x="962" y="209" fill="#569cd6">null</text>
+
+    <text x="522" y="247" fill="#dcdcaa">setTimeout</text>
+    <text x="620" y="247" fill="#d4d4d4">(() =&gt;</text>
+    <text x="694" y="247" fill="#9cdcfe">setSuppressLoaderFlash</text>
+    <text x="926" y="247" fill="#d4d4d4">(</text>
+    <text x="936" y="247" fill="#4fc1ff">true</text>
+    <text x="974" y="247" fill="#d4d4d4">),</text>
+    <text x="1008" y="247" fill="#b5cea8">140</text>
+    <text x="1040" y="247" fill="#d4d4d4">)</text>
+
+    <text x="522" y="323" fill="#6a9955">// keep OpenSpec files visible beside implementation work</text>
+    <text x="522" y="361" fill="#569cd6">const</text>
+    <text x="578" y="361" fill="#9cdcfe">agentArtifacts</text>
+    <text x="712" y="361" fill="#d4d4d4">=</text>
+    <text x="730" y="361" fill="#ce9178">[</text>
+    <text x="748" y="361" fill="#ce9178">'tasks.md'</text>
+    <text x="844" y="361" fill="#d4d4d4">,</text>
+    <text x="862" y="361" fill="#ce9178">'spec.md'</text>
+    <text x="950" y="361" fill="#ce9178">]</text>
+
+    <text x="522" y="399" fill="#c586c0">if</text>
+    <text x="552" y="399" fill="#d4d4d4">(</text>
+    <text x="564" y="399" fill="#9cdcfe">agentArtifacts</text>
+    <text x="698" y="399" fill="#d4d4d4">.</text>
+    <text x="706" y="399" fill="#dcdcaa">length</text>
+    <text x="756" y="399" fill="#d4d4d4">)</text>
+    <text x="772" y="399" fill="#d4d4d4">{</text>
+
+    <text x="548" y="437" fill="#9cdcfe">sidebarHint</text>
+    <text x="642" y="437" fill="#d4d4d4">=</text>
+    <text x="660" y="437" fill="#ce9178">'source control stays readable'</text>
+  </g>
+
+  <rect x="40" y="844" width="1320" height="26" rx="0" fill="#007acc"/>
+  <text x="58" y="861" fill="#ffffff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">gitguardex</text>
+  <text x="158" y="861" fill="#d9efff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">agent/codex/improve-vscode-reference-image</text>
+  <text x="1130" y="861" fill="#d9efff" font-family="'IBM Plex Sans', 'Segoe UI', sans-serif" font-size="12">Ln 19, Col 9   UTF-8   TypeScript React</text>
 </svg>
