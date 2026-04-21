@@ -1,6 +1,7 @@
+const fs = require('node:fs');
 const path = require('node:path');
 const vscode = require('vscode');
-const { formatElapsedFrom, readActiveSessions } = require('./session-schema.js');
+const { formatElapsedFrom, readActiveSessions, readRepoChanges } = require('./session-schema.js');
 
 class InfoItem extends vscode.TreeItem {
   constructor(label, description = '') {
@@ -11,14 +12,28 @@ class InfoItem extends vscode.TreeItem {
 }
 
 class RepoItem extends vscode.TreeItem {
-  constructor(repoRoot, sessions) {
+  constructor(repoRoot, sessions, changes) {
     super(path.basename(repoRoot), vscode.TreeItemCollapsibleState.Expanded);
     this.repoRoot = repoRoot;
     this.sessions = sessions;
-    this.description = `${sessions.length} active`;
+    this.changes = changes;
+    const descriptionParts = [`${sessions.length} active`];
+    if (changes.length > 0) {
+      descriptionParts.push(`${changes.length} changed`);
+    }
+    this.description = descriptionParts.join(' · ');
     this.tooltip = repoRoot;
     this.iconPath = new vscode.ThemeIcon('repo');
     this.contextValue = 'gitguardex.repo';
+  }
+}
+
+class SectionItem extends vscode.TreeItem {
+  constructor(label, items) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
+    this.items = items;
+    this.description = items.length > 0 ? String(items.length) : '';
+    this.contextValue = 'gitguardex.section';
   }
 }
 
@@ -53,8 +68,101 @@ class SessionItem extends vscode.TreeItem {
   }
 }
 
+class FolderItem extends vscode.TreeItem {
+  constructor(label, relativePath, items) {
+    super(label, vscode.TreeItemCollapsibleState.Expanded);
+    this.relativePath = relativePath;
+    this.items = items;
+    this.tooltip = relativePath;
+    this.iconPath = new vscode.ThemeIcon('folder');
+    this.contextValue = 'gitguardex.folder';
+  }
+}
+
+class ChangeItem extends vscode.TreeItem {
+  constructor(change) {
+    super(path.basename(change.relativePath), vscode.TreeItemCollapsibleState.None);
+    this.change = change;
+    this.description = change.statusLabel;
+    this.tooltip = [
+      change.relativePath,
+      `Status ${change.statusText}`,
+      change.originalPath ? `Renamed from ${change.originalPath}` : '',
+      change.absolutePath,
+    ].filter(Boolean).join('\n');
+    this.resourceUri = vscode.Uri.file(change.absolutePath);
+    this.contextValue = 'gitguardex.change';
+    this.command = {
+      command: 'gitguardex.activeAgents.openChange',
+      title: 'Open Changed File',
+      arguments: [change],
+    };
+  }
+}
+
 function repoRootFromSessionFile(filePath) {
   return path.resolve(path.dirname(filePath), '..', '..', '..');
+}
+
+function buildChangeTreeNodes(changes) {
+  const root = [];
+
+  function sortNodes(nodes) {
+    nodes.sort((left, right) => {
+      const leftIsFolder = left.kind === 'folder';
+      const rightIsFolder = right.kind === 'folder';
+      if (leftIsFolder !== rightIsFolder) {
+        return leftIsFolder ? -1 : 1;
+      }
+      return left.label.localeCompare(right.label);
+    });
+
+    for (const node of nodes) {
+      if (node.kind === 'folder') {
+        sortNodes(node.children);
+      }
+    }
+  }
+
+  for (const change of changes) {
+    const segments = change.relativePath.split(/[\\/]+/).filter(Boolean);
+    if (segments.length <= 1) {
+      root.push({ kind: 'change', label: change.relativePath, change });
+      continue;
+    }
+
+    let nodes = root;
+    let folderPath = '';
+    for (const segment of segments.slice(0, -1)) {
+      folderPath = folderPath ? path.posix.join(folderPath, segment) : segment;
+      let folderNode = nodes.find((node) => node.kind === 'folder' && node.relativePath === folderPath);
+      if (!folderNode) {
+        folderNode = {
+          kind: 'folder',
+          label: segment,
+          relativePath: folderPath,
+          children: [],
+        };
+        nodes.push(folderNode);
+      }
+      nodes = folderNode.children;
+    }
+
+    nodes.push({ kind: 'change', label: change.relativePath, change });
+  }
+
+  sortNodes(root);
+
+  function materialize(nodes) {
+    return nodes.map((node) => {
+      if (node.kind === 'folder') {
+        return new FolderItem(node.label, node.relativePath, materialize(node.children));
+      }
+      return new ChangeItem(node.change);
+    });
+  }
+
+  return materialize(root);
 }
 
 class ActiveAgentsProvider {
@@ -95,29 +203,31 @@ class ActiveAgentsProvider {
 
   async getChildren(element) {
     if (element instanceof RepoItem) {
-      return element.sessions.map((session) => new SessionItem(session));
+      const sectionItems = [
+        new SectionItem('ACTIVE AGENTS', element.sessions.map((session) => new SessionItem(session))),
+      ];
+      if (element.changes.length > 0) {
+        sectionItems.push(new SectionItem('CHANGES', buildChangeTreeNodes(element.changes)));
+      }
+      return sectionItems;
     }
 
-    const sessionsByRepo = await this.loadSessionsByRepo();
-    const sessionCount = [...sessionsByRepo.values()].reduce((total, sessions) => total + sessions.length, 0);
-    this.updateViewState(sessionCount);
-    const repos = [...sessionsByRepo.entries()]
-      .map(([repoRoot, sessions]) => ({ repoRoot, sessions }))
-      .filter((entry) => entry.sessions.length > 0)
-      .sort((left, right) => left.repoRoot.localeCompare(right.repoRoot));
+    if (element instanceof SectionItem || element instanceof FolderItem) {
+      return element.items;
+    }
 
-    if (repos.length === 0) {
+    const repoEntries = await this.loadRepoEntries();
+    const sessionCount = repoEntries.reduce((total, entry) => total + entry.sessions.length, 0);
+    this.updateViewState(sessionCount);
+
+    if (repoEntries.length === 0) {
       return [new InfoItem('No active Guardex agents', 'Open or start a sandbox session.')];
     }
 
-    if (repos.length === 1) {
-      return repos[0].sessions.map((session) => new SessionItem(session));
-    }
-
-    return repos.map((entry) => new RepoItem(entry.repoRoot, entry.sessions));
+    return repoEntries.map((entry) => new RepoItem(entry.repoRoot, entry.sessions, entry.changes));
   }
 
-  async loadSessionsByRepo() {
+  async loadRepoEntries() {
     const sessionFiles = await vscode.workspace.findFiles(
       '**/.omx/state/active-sessions/*.json',
       '**/{node_modules,.git,.omx/agent-worktrees,.omc/agent-worktrees}/**',
@@ -135,15 +245,20 @@ class ActiveAgentsProvider {
       }
     }
 
-    const sessionsByRepo = new Map();
+    const repoEntries = [];
     for (const repoRoot of repoRoots) {
       const sessions = readActiveSessions(repoRoot);
       if (sessions.length > 0) {
-        sessionsByRepo.set(repoRoot, sessions);
+        repoEntries.push({
+          repoRoot,
+          sessions,
+          changes: readRepoChanges(repoRoot),
+        });
       }
     }
 
-    return sessionsByRepo;
+    repoEntries.sort((left, right) => left.repoRoot.localeCompare(right.repoRoot));
+    return repoEntries;
   }
 }
 
@@ -171,6 +286,18 @@ function activate(context) {
         vscode.Uri.file(session.worktreePath),
         { forceNewWindow: true },
       );
+    }),
+    vscode.commands.registerCommand('gitguardex.activeAgents.openChange', async (change) => {
+      if (!change?.absolutePath) {
+        return;
+      }
+
+      if (!fs.existsSync(change.absolutePath)) {
+        vscode.window.showInformationMessage?.(`Changed path is no longer on disk: ${change.relativePath}`);
+        return;
+      }
+
+      await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(change.absolutePath));
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(refresh),
     watcher,

@@ -6,6 +6,7 @@ const ACTIVE_SESSIONS_RELATIVE_DIR = path.join('.omx', 'state', 'active-sessions
 const SESSION_SCHEMA_VERSION = 1;
 const LOCK_FILE_RELATIVE = path.join('.omx', 'state', 'agent-file-locks.json');
 const MAX_CHANGED_PATH_PREVIEW = 3;
+const ACTIVE_SESSIONS_FILTER_PREFIX = ACTIVE_SESSIONS_RELATIVE_DIR.split(path.sep).join('/');
 
 function toNonEmptyString(value, fallback = '') {
   const normalized = typeof value === 'string' ? value.trim() : String(value || '').trim();
@@ -41,8 +42,7 @@ function splitOutputLines(output) {
 
   return output
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line.trim().length > 0);
 }
 
 function runGitLines(worktreePath, args) {
@@ -54,6 +54,23 @@ function runGitLines(worktreePath, args) {
     return splitOutputLines(output);
   } catch (_error) {
     return null;
+  }
+}
+
+function unquoteGitPath(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('"') || !trimmed.endsWith('"')) {
+    return trimmed;
+  }
+
+  try {
+    return JSON.parse(trimmed);
+  } catch (_error) {
+    return trimmed.slice(1, -1);
   }
 }
 
@@ -72,6 +89,80 @@ function previewChangedPaths(paths) {
 
   const preview = paths.slice(0, MAX_CHANGED_PATH_PREVIEW).join(', ');
   return `${preview}, +${paths.length - MAX_CHANGED_PATH_PREVIEW} more`;
+}
+
+function deriveRepoChangeStatus(statusPair) {
+  if (statusPair === '??') {
+    return {
+      statusCode: '??',
+      statusLabel: 'U',
+      statusText: 'Untracked',
+    };
+  }
+
+  const code = [statusPair[1], statusPair[0]].find((value) => value && value !== ' ') || 'M';
+  const statusTextByCode = {
+    A: 'Added',
+    C: 'Copied',
+    D: 'Deleted',
+    M: 'Modified',
+    R: 'Renamed',
+    T: 'Type changed',
+    U: 'Conflicted',
+  };
+
+  return {
+    statusCode: code,
+    statusLabel: code,
+    statusText: statusTextByCode[code] || 'Changed',
+  };
+}
+
+function parseRepoChangeLine(repoRoot, line) {
+  if (typeof line !== 'string' || line.length < 4) {
+    return null;
+  }
+
+  const statusPair = line.slice(0, 2);
+  if (statusPair === '!!') {
+    return null;
+  }
+
+  const rawPath = line.slice(3).trim();
+  if (!rawPath) {
+    return null;
+  }
+
+  let relativePath = rawPath;
+  let originalPath = '';
+  if (rawPath.includes(' -> ')) {
+    const parts = rawPath.split(' -> ');
+    if (parts.length === 2) {
+      originalPath = unquoteGitPath(parts[0]);
+      relativePath = parts[1];
+    }
+  }
+
+  relativePath = unquoteGitPath(relativePath);
+  if (!relativePath) {
+    return null;
+  }
+
+  const normalizedRelativePath = relativePath.split(path.sep).join('/');
+  if (
+    normalizedRelativePath === ACTIVE_SESSIONS_FILTER_PREFIX
+    || normalizedRelativePath.startsWith(`${ACTIVE_SESSIONS_FILTER_PREFIX}/`)
+  ) {
+    return null;
+  }
+
+  const status = deriveRepoChangeStatus(statusPair);
+  return {
+    ...status,
+    originalPath,
+    relativePath,
+    absolutePath: path.join(path.resolve(repoRoot), relativePath),
+  };
 }
 
 function collectWorktreeChangedPaths(worktreePath) {
@@ -281,6 +372,18 @@ function readActiveSessions(repoRoot, options = {}) {
   return sessions;
 }
 
+function readRepoChanges(repoRoot) {
+  const statusLines = runGitLines(repoRoot, ['status', '--porcelain=v1', '--untracked-files=all']);
+  if (!statusLines) {
+    return [];
+  }
+
+  return statusLines
+    .map((line) => parseRepoChangeLine(repoRoot, line))
+    .filter(Boolean)
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
 module.exports = {
   ACTIVE_SESSIONS_RELATIVE_DIR,
   SESSION_SCHEMA_VERSION,
@@ -293,8 +396,11 @@ module.exports = {
   formatFileCount,
   isPidAlive,
   normalizeSessionRecord,
+  parseRepoChangeLine,
   previewChangedPaths,
   readActiveSessions,
+  readRepoChanges,
+  deriveRepoChangeStatus,
   sanitizeBranchForFile,
   sessionFileNameForBranch,
   sessionFilePathForBranch,

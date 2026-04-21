@@ -112,6 +112,7 @@ function createMockVscode(tempRoot) {
         file: (fsPath) => ({ fsPath }),
       },
       window: {
+        showInformationMessage: async () => {},
         createTreeView: (viewId, options) => {
           const treeView = {
             viewId,
@@ -262,6 +263,26 @@ test('session-schema derives working activity from dirty sandbox worktrees', () 
   assert.equal(session.activitySummary, 'new-file.txt, tracked.txt');
 });
 
+test('session-schema derives repo change rows from root git status', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-active-session-root-status-'));
+  initGitRepo(tempRoot);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\nchanged\n', 'utf8');
+  fs.writeFileSync(path.join(tempRoot, 'new-file.txt'), 'new\n', 'utf8');
+
+  const changes = sessionSchema.readRepoChanges(tempRoot);
+  assert.deepEqual(
+    changes.map((change) => [change.relativePath, change.statusLabel]),
+    [
+      ['new-file.txt', 'U'],
+      ['tracked.txt', 'M'],
+    ],
+  );
+});
+
 test('install-vscode-active-agents-extension installs the current extension version and prunes older copies', () => {
   const tempExtensionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-ext-'));
   const staleDir = path.join(tempExtensionsDir, 'recodeee.gitguardex-active-agents-0.0.0');
@@ -308,7 +329,7 @@ test('active-agents extension registers a provider with getTreeItem', async () =
   }
 });
 
-test('active-agents extension updates the SCM badge for live sessions', async () => {
+test('active-agents extension groups live sessions under a repo node', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-live-view-'));
   const sessionPath = sessionSchema.sessionFilePathForBranch(tempRoot, 'agent/codex/live-task');
   fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
@@ -334,7 +355,14 @@ test('active-agents extension updates the SCM badge for live sessions', async ()
   extension.activate(context);
 
   const provider = registrations.providers[0].provider;
-  const [sessionItem] = await provider.getChildren();
+  const [repoItem] = await provider.getChildren();
+  assert.equal(repoItem.label, path.basename(tempRoot));
+  assert.equal(repoItem.description, '1 active');
+
+  const [agentsSection] = await provider.getChildren(repoItem);
+  assert.equal(agentsSection.label, 'ACTIVE AGENTS');
+
+  const [sessionItem] = await provider.getChildren(agentsSection);
   assert.equal(sessionItem.label, 'live-task');
   assert.match(sessionItem.description, /^thinking · \d+[smhd]/);
   assert.deepEqual(registrations.treeViews[0].badge, {
@@ -348,9 +376,15 @@ test('active-agents extension updates the SCM badge for live sessions', async ()
   }
 });
 
-test('active-agents extension shows working rows when the sandbox has changes', async () => {
+test('active-agents extension shows grouped repo changes beside active agents', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-working-view-'));
-  const worktreePath = path.join(tempRoot, 'sandbox');
+  initGitRepo(tempRoot);
+  fs.writeFileSync(path.join(tempRoot, 'root-file.txt'), 'base\n', 'utf8');
+  runGit(tempRoot, ['add', 'root-file.txt']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+  fs.writeFileSync(path.join(tempRoot, 'root-file.txt'), 'base\nchanged\n', 'utf8');
+
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-working-session-'));
   initGitRepo(worktreePath);
   fs.writeFileSync(path.join(worktreePath, 'tracked.txt'), 'base\n', 'utf8');
   runGit(worktreePath, ['add', 'tracked.txt']);
@@ -382,10 +416,20 @@ test('active-agents extension shows working rows when the sandbox has changes', 
   extension.activate(context);
 
   const provider = registrations.providers[0].provider;
-  const [sessionItem] = await provider.getChildren();
-  assert.equal(sessionItem.label, 'sandbox');
+  const [repoItem] = await provider.getChildren();
+  const [agentsSection, changesSection] = await provider.getChildren(repoItem);
+  assert.equal(agentsSection.label, 'ACTIVE AGENTS');
+  assert.equal(changesSection.label, 'CHANGES');
+
+  const [sessionItem] = await provider.getChildren(agentsSection);
+  assert.equal(sessionItem.label, path.basename(worktreePath));
   assert.match(sessionItem.description, /^working · 2 files · /);
   assert.match(sessionItem.tooltip, /Changed 2 files: new-file\.txt, tracked\.txt/);
+
+  const [changeItem] = await provider.getChildren(changesSection);
+  assert.equal(changeItem.label, 'root-file.txt');
+  assert.equal(changeItem.description, 'M');
+  assert.match(changeItem.tooltip, /Status Modified/);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
