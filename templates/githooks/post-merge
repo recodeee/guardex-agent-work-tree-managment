@@ -32,17 +32,30 @@ if [[ "$branch" != "$base_branch" ]]; then
   exit 0
 fi
 
-cli_path="$repo_root/bin/multiagent-safety.js"
-if [[ ! -f "$cli_path" ]]; then
+if [[ -n "${GUARDEX_CLI_ENTRY:-}" ]]; then
+  node_bin="${GUARDEX_NODE_BIN:-node}"
+  if command -v "$node_bin" >/dev/null 2>&1; then
+    "$node_bin" "$GUARDEX_CLI_ENTRY" cleanup \
+      --target "$repo_root" \
+      --base "$base_branch" \
+      --include-pr-merged \
+      --keep-clean-worktrees >/dev/null 2>&1 || true
+  fi
   exit 0
 fi
 
-node_bin="${GUARDEX_NODE_BIN:-node}"
-if ! command -v "$node_bin" >/dev/null 2>&1; then
-  exit 0
+cli_bin="${GUARDEX_CLI_BIN:-}"
+if [[ -z "$cli_bin" ]]; then
+  if command -v gx >/dev/null 2>&1; then
+    cli_bin="gx"
+  elif command -v gitguardex >/dev/null 2>&1; then
+    cli_bin="gitguardex"
+  else
+    exit 0
+  fi
 fi
 
-"$node_bin" "$cli_path" cleanup \
+"$cli_bin" cleanup \
   --target "$repo_root" \
   --base "$base_branch" \
   --include-pr-merged \

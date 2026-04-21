@@ -49,7 +49,7 @@ npm i -g @imdeadpool/guardex
 
 <p align="center">
   <sub>
-    Then <code>cd</code> into your repo and run <code>gx setup</code> — hooks, scripts, templates,
+    Then <code>cd</code> into your repo and run <code>gx setup</code> — hook shims, workflow shims, repo state,
     and OMX&nbsp;/&nbsp;OpenSpec&nbsp;/&nbsp;caveman wiring all scaffold in one go.
   </sub>
 </p>
@@ -88,7 +88,7 @@ cd /path/to/your/repo
 gx setup
 ```
 
-That's it. Install and update via `@imdeadpool/guardex`. Setup installs hooks, scripts, templates, and scaffolds OpenSpec/caveman/OMX wiring. Aliases: `gx` (preferred), `gitguardex` (full), `guardex` (legacy compatibility).
+That's it. Install and update via `@imdeadpool/guardex`. Setup installs the minimal repo footprint: managed hook/workflow shims, lock state, AGENTS wiring, and OpenSpec/caveman/OMX scaffolding. Aliases: `gx` (preferred), `gitguardex` (full), `guardex` (legacy compatibility).
 
 ---
 
@@ -119,7 +119,7 @@ That's it. Install and update via `@imdeadpool/guardex`. Setup installs hooks, s
 </div>
 
 > [!NOTE]
-> In this repo, `CLAUDE.md` is a symlink to `AGENTS.md`, so Claude reads the same contract. Claude-specific command guidance is installed separately at `.claude/commands/gitguardex.md`.
+> In this repo, `CLAUDE.md` is a symlink to `AGENTS.md`, so Claude reads the same contract. Optional Codex/Claude companion files are installed at the user level with `gx install-agent-skills`, not copied into each repo.
 
 ### Decision flow
 
@@ -178,7 +178,7 @@ Before you branch, repair, or start agents, run plain `gx`. It gives you a one-s
 
 ![GitGuardex terminal status output](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/workflow-gx-terminal-status.svg)
 
-Use `gx setup` the first time you wire GitGuardex into a repo. It bootstraps the managed hooks, scripts, templates, and optional workspace/OpenSpec wiring. If the repo drifts later, use `gx doctor` as the repair path: it reapplies the managed safety files, verifies the setup, and on protected `main` it auto-sandboxes the repair so your visible base branch stays clean.
+Use `gx setup` the first time you wire GitGuardex into a repo. It bootstraps the managed hook/workflow shims, repo state, and optional workspace/OpenSpec wiring. If the repo drifts later, use `gx doctor` as the repair path: it reapplies the managed safety files, verifies the setup, and on protected `main` it auto-sandboxes the repair so your visible base branch stays clean.
 
 ---
 
@@ -188,22 +188,22 @@ Per new agent task:
 
 ```sh
 # 1) Start isolated branch/worktree
-bash scripts/agent-branch-start.sh "task-name" "agent-name"
+gx branch start "task-name" "agent-name"
 
 # 2) Claim the files you're going to touch
-python3 scripts/agent-file-locks.py claim \
+gx locks claim \
   --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
 
 # 3) Implement + verify
 npm test
 
 # 4) Finish (commit + push + PR + merge + cleanup)
-bash scripts/agent-branch-finish.sh \
+gx branch finish \
   --branch "$(git rev-parse --abbrev-ref HEAD)" \
   --base main --via-pr --wait-for-merge --cleanup
 ```
 
-If you use `scripts/codex-agent.sh`, the finish flow runs automatically when the Codex session exits — it auto-commits, retries once after syncing if the base moved during the run, then pushes and opens the PR.
+If you use the managed Codex launcher shim, the finish flow runs automatically when the Codex session exits — it auto-commits, retries once after syncing if the base moved during the run, then pushes and opens the PR.
 
 GitGuardex normally prunes merged sandboxes for you as part of the finish flow. If you simply do not want a local sandbox/worktree anymore, remove that worktree directly; delete the branch too only if you are intentionally abandoning that lane:
 
@@ -383,7 +383,7 @@ A few things worth knowing up front:
 - Direct commits/pushes to protected branches are **blocked** by default. Agents must use the `agent/*` + PR flow.
 - **Exception:** VS Code Source Control commits are allowed on protected branches that exist only locally (no upstream, no remote branch).
 - On protected `main`, `gx doctor` auto-runs in a sandbox agent branch/worktree so it can't touch your real main.
-- In-place agent branching is disabled. `scripts/agent-branch-start.sh` always creates a separate worktree so your visible local/base branch never changes.
+- In-place agent branching is disabled. `gx branch start` always creates a separate worktree so your visible local/base branch never changes.
 - Fresh sandbox branches start with no git upstream. Guardex records the protected base in `branch.<name>.guardexBase`, and the first `git push -u` publishes the real upstream.
 - Interactive self-update prompt defaults to **No** (`[y/N]`).
 
@@ -542,8 +542,8 @@ Expanded flow:
 
 ### OpenSpec in agent sub-branches
 
-- `scripts/codex-agent.sh` enforces OpenSpec workspaces before launching Codex.
-- `scripts/agent-branch-start.sh` can scaffold both `openspec/changes/<slug>/` and `openspec/plan/<slug>/` when `GUARDEX_OPENSPEC_AUTO_INIT=true`.
+- The managed Codex launcher shim enforces OpenSpec workspaces before launching Codex.
+- `gx branch start` can scaffold both `openspec/changes/<slug>/` and `openspec/plan/<slug>/` when `GUARDEX_OPENSPEC_AUTO_INIT=true`.
 - The collaboration section in `tasks.md` is there for real cleanup handoffs too. If the first Codex/Claude session finishes the implementation work but hits a usage limit before `agent-branch-finish --cleanup`, hand the same sandbox to another agent, let that agent finish cleanup, and record the join/handoff in the change task.
 
 Environment variables:
@@ -560,25 +560,26 @@ Environment variables:
 ## Files installed by setup
 
 ```text
-scripts/agent-branch-start.sh
-scripts/agent-branch-finish.sh
-scripts/codex-agent.sh
-scripts/review-bot-watch.sh
-scripts/agent-worktree-prune.sh
-scripts/agent-file-locks.py
-scripts/install-agent-git-hooks.sh
-scripts/openspec/init-plan-workspace.sh
-.githooks/pre-commit
-.githooks/pre-push
-.codex/skills/gitguardex/SKILL.md
-.claude/commands/gitguardex.md
-.github/pull.yml.example
-.github/workflows/cr.yml
+.githooks/pre-commit        # shim -> gx hook run pre-commit
+.githooks/pre-push          # shim -> gx hook run pre-push
+.githooks/post-merge        # shim -> gx hook run post-merge
+.githooks/post-checkout     # shim -> gx hook run post-checkout
+scripts/agent-branch-start.sh          # shim -> gx branch start
+scripts/agent-branch-finish.sh         # shim -> gx branch finish
+scripts/agent-branch-merge.sh          # shim -> gx branch merge
+scripts/agent-worktree-prune.sh        # shim -> gx worktree prune
+scripts/agent-file-locks.py            # shim -> gx locks ...
+scripts/codex-agent.sh                 # shim -> CLI-owned Codex launcher
+scripts/review-bot-watch.sh            # shim -> CLI-owned review bot
+scripts/openspec/init-plan-workspace.sh    # shim -> CLI-owned OpenSpec init
+scripts/openspec/init-change-workspace.sh  # shim -> CLI-owned OpenSpec init
 .omc/agent-worktrees
 .omx/state/agent-file-locks.json
+.github/pull.yml.example
+.github/workflows/cr.yml
 ```
 
-If `package.json` exists, setup also adds `agent:*` helper scripts.
+Repo-local Codex/Claude helper files are no longer copied into the repo. Install the optional user-level companions with `gx install-agent-skills`.
 
 ---
 
