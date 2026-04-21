@@ -280,6 +280,9 @@ const DEPRECATED_COMMAND_ALIASES = new Map([
 const AGENT_BOT_DESCRIPTIONS = [
   ['agents', 'Start/stop review + cleanup bots for this repo'],
 ];
+const DOCTOR_AUTO_FINISH_DETAIL_LIMIT = 6;
+const DOCTOR_AUTO_FINISH_BRANCH_LABEL_MAX = 72;
+const DOCTOR_AUTO_FINISH_MESSAGE_MAX = 160;
 
 function envFlagIsTruthy(raw) {
   const lowered = String(raw || '').trim().toLowerCase();
@@ -502,6 +505,113 @@ function run(cmd, args, options = {}) {
     cwd: options.cwd,
     timeout: options.timeout,
   });
+}
+
+function formatElapsedDuration(ms) {
+  const durationMs = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  if (durationMs < 1000) {
+    return `${Math.round(durationMs)}ms`;
+  }
+  if (durationMs < 10_000) {
+    return `${(durationMs / 1000).toFixed(1)}s`;
+  }
+  return `${Math.round(durationMs / 1000)}s`;
+}
+
+function truncateMiddle(value, maxLength) {
+  const text = String(value || '');
+  const limit = Number.isFinite(maxLength) ? Math.max(4, maxLength) : 0;
+  if (!limit || text.length <= limit) {
+    return text;
+  }
+
+  const visible = limit - 1;
+  const headLength = Math.ceil(visible / 2);
+  const tailLength = Math.floor(visible / 2);
+  return `${text.slice(0, headLength)}…${text.slice(text.length - tailLength)}`;
+}
+
+function truncateTail(value, maxLength) {
+  const text = String(value || '');
+  const limit = Number.isFinite(maxLength) ? Math.max(4, maxLength) : 0;
+  if (!limit || text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit - 1)}…`;
+}
+
+function compactAutoFinishPathSegments(message) {
+  return String(message || '').replace(/\((\/[^)]+)\)/g, (_, rawPath) => {
+    if (
+      rawPath.includes(`${path.sep}.omx${path.sep}agent-worktrees${path.sep}`) ||
+      rawPath.includes(`${path.sep}.omc${path.sep}agent-worktrees${path.sep}`)
+    ) {
+      return `(${path.basename(rawPath)})`;
+    }
+    return `(${truncateMiddle(rawPath, 72)})`;
+  });
+}
+
+function summarizeAutoFinishDetail(detail) {
+  const trimmed = String(detail || '').trim();
+  const match = trimmed.match(/^\[(\w+)\]\s+([^:]+):\s*(.*)$/);
+  if (!match) {
+    return truncateTail(compactAutoFinishPathSegments(trimmed), DOCTOR_AUTO_FINISH_MESSAGE_MAX);
+  }
+
+  const [, status, rawBranch, rawMessage] = match;
+  const branch = truncateMiddle(rawBranch, DOCTOR_AUTO_FINISH_BRANCH_LABEL_MAX);
+  let message = String(rawMessage || '').trim();
+
+  if (status === 'fail') {
+    message = message.replace(/^auto-finish failed\.?\s*/i, '');
+    if (/\[agent-sync-guard\]/.test(message) && /Resolve conflicts/i.test(message)) {
+      message = 'rebase conflict in finish flow; run rebase --continue or rebase --abort in the source-probe worktree';
+    } else if (/unable to compute ahead\/behind/i.test(message)) {
+      const aheadBehindMatch = message.match(/unable to compute ahead\/behind(?: \([^)]+\))?/i);
+      if (aheadBehindMatch) {
+        message = aheadBehindMatch[0];
+      }
+    } else if (/remote ref does not exist/i.test(message)) {
+      message = 'branch merged, but the remote ref was already removed during cleanup';
+    }
+  }
+
+  message = compactAutoFinishPathSegments(message)
+    .replace(/\s+\|\s+/g, '; ')
+    .trim();
+
+  return `[${status}] ${branch}: ${truncateTail(message, DOCTOR_AUTO_FINISH_MESSAGE_MAX)}`;
+}
+
+function printAutoFinishSummary(summary, options = {}) {
+  const enabled = Boolean(summary && summary.enabled);
+  const details = Array.isArray(summary && summary.details) ? summary.details : [];
+  const baseBranch = String(options.baseBranch || summary?.baseBranch || '').trim();
+  const verbose = Boolean(options.verbose);
+  const detailLimit = Number.isFinite(options.detailLimit)
+    ? Math.max(0, options.detailLimit)
+    : DOCTOR_AUTO_FINISH_DETAIL_LIMIT;
+
+  if (enabled) {
+    console.log(
+      `[${TOOL_NAME}] Auto-finish sweep (base=${baseBranch}): attempted=${summary.attempted}, completed=${summary.completed}, skipped=${summary.skipped}, failed=${summary.failed}`,
+    );
+    const visibleDetails = verbose ? details : details.slice(0, detailLimit).map(summarizeAutoFinishDetail);
+    for (const detail of visibleDetails) {
+      console.log(`[${TOOL_NAME}]   ${detail}`);
+    }
+    if (!verbose && details.length > detailLimit) {
+      console.log(
+        `[${TOOL_NAME}]   … ${details.length - detailLimit} more branch result(s). Re-run with --verbose-auto-finish for full details.`,
+      );
+    }
+    return;
+  }
+
+  if (details.length > 0) {
+    console.log(`[${TOOL_NAME}] ${verbose ? details[0] : summarizeAutoFinishDetail(details[0])}`);
+  }
 }
 
 function gitRun(repoRoot, args, { allowFailure = false } = {}) {
@@ -1121,7 +1231,7 @@ function parseSetupArgs(rawArgs, defaults) {
 }
 
 function parseDoctorArgs(rawArgs) {
-  return parseRepoTraversalArgs(rawArgs, {
+  const doctorDefaults = {
     target: process.cwd(),
     dropStaleLocks: true,
     skipAgents: false,
@@ -1131,7 +1241,24 @@ function parseDoctorArgs(rawArgs) {
     json: false,
     allowProtectedBaseWrite: false,
     waitForMerge: true,
-  });
+    verboseAutoFinish: false,
+  };
+  const forwardedArgs = [];
+
+  for (let index = 0; index < rawArgs.length; index += 1) {
+    const arg = rawArgs[index];
+    if (arg === '--verbose-auto-finish') {
+      doctorDefaults.verboseAutoFinish = true;
+      continue;
+    }
+    if (arg === '--compact-auto-finish') {
+      doctorDefaults.verboseAutoFinish = false;
+      continue;
+    }
+    forwardedArgs.push(arg);
+  }
+
+  return parseRepoTraversalArgs(forwardedArgs, doctorDefaults);
 }
 
 function normalizeWorkspacePath(relativePath) {
@@ -1309,6 +1436,7 @@ function buildSandboxDoctorArgs(options, sandboxTarget) {
   if (options.skipGitignore) args.push('--no-gitignore');
   if (!options.dropStaleLocks) args.push('--keep-stale-locks');
   args.push(options.waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge');
+  if (options.verboseAutoFinish) args.push('--verbose-auto-finish');
   if (options.json) args.push('--json');
   return args;
 }
@@ -2207,6 +2335,7 @@ function runDoctorInSandbox(options, blocked) {
     postSandboxAutoFinishSummary = autoFinishReadyAgentBranches(blocked.repoRoot, {
       baseBranch: blocked.branch,
       dryRun: options.dryRun,
+      waitForMerge: options.waitForMerge,
       excludeBranches: [metadata.branch],
     });
   }
@@ -2307,16 +2436,10 @@ function runDoctorInSandbox(options, blocked) {
         console.log(`[${TOOL_NAME}] Auto-finish skipped: ${finishResult.note}.`);
       }
 
-      if (postSandboxAutoFinishSummary.enabled) {
-        console.log(
-          `[${TOOL_NAME}] Auto-finish sweep (base=${blocked.branch}): attempted=${postSandboxAutoFinishSummary.attempted}, completed=${postSandboxAutoFinishSummary.completed}, skipped=${postSandboxAutoFinishSummary.skipped}, failed=${postSandboxAutoFinishSummary.failed}`,
-        );
-        for (const detail of postSandboxAutoFinishSummary.details) {
-          console.log(`[${TOOL_NAME}]   ${detail}`);
-        }
-      } else if (postSandboxAutoFinishSummary.details.length > 0) {
-        console.log(`[${TOOL_NAME}] ${postSandboxAutoFinishSummary.details[0]}`);
-      }
+      printAutoFinishSummary(postSandboxAutoFinishSummary, {
+        baseBranch: blocked.branch,
+        verbose: options.verboseAutoFinish,
+      });
       if (omxScaffoldSyncResult.status === 'synced') {
         console.log(`[${TOOL_NAME}] Synced .omx scaffold back to protected branch workspace.`);
       } else if (omxScaffoldSyncResult.status === 'unchanged') {
@@ -2871,6 +2994,7 @@ function hasSignificantWorkingTreeChanges(worktreePath) {
 function autoFinishReadyAgentBranches(repoRoot, options = {}) {
   const baseBranch = String(options.baseBranch || '').trim();
   const dryRun = Boolean(options.dryRun);
+  const waitForMerge = options.waitForMerge !== false;
   const excludedBranches = new Set(
     Array.isArray(options.excludeBranches)
       ? options.excludeBranches.map((branch) => String(branch || '').trim()).filter(Boolean)
@@ -2989,7 +3113,7 @@ function autoFinishReadyAgentBranches(repoRoot, options = {}) {
       '--base',
       baseBranch,
       '--via-pr',
-      '--wait-for-merge',
+      waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
       '--cleanup',
     ];
     const finishResult = run('bash', finishArgs, { cwd: repoRoot });
@@ -5127,31 +5251,38 @@ function doctor(rawArgs) {
 
     const repoResults = [];
     let aggregateExitCode = 0;
-    for (const repoPath of discoveredRepos) {
+    for (let repoIndex = 0; repoIndex < discoveredRepos.length; repoIndex += 1) {
+      const repoPath = discoveredRepos[repoIndex];
+      const progressLabel = `${repoIndex + 1}/${discoveredRepos.length}`;
       if (!options.json) {
-        console.log(`[${TOOL_NAME}] ── Doctor target: ${repoPath} ──`);
+        console.log(`[${TOOL_NAME}] ── Doctor target: ${repoPath} [${progressLabel}] ──`);
       }
 
-      const nestedResult = run(
-        process.execPath,
-        [
-          path.resolve(__filename),
-          'doctor',
-          '--single-repo',
-          '--target',
-          repoPath,
-          ...(options.dropStaleLocks ? [] : ['--keep-stale-locks']),
-          ...(options.skipAgents ? ['--skip-agents'] : []),
-          ...(options.skipPackageJson ? ['--skip-package-json'] : []),
-          ...(options.skipGitignore ? ['--no-gitignore'] : []),
-          ...(options.dryRun ? ['--dry-run'] : []),
-          // Recursive child doctor runs should report pending PR state immediately instead of blocking the parent loop.
-          '--no-wait-for-merge',
-          ...(options.json ? ['--json'] : []),
-          ...(options.allowProtectedBaseWrite ? ['--allow-protected-base-write'] : []),
-        ],
-        { cwd: topRepoRoot },
-      );
+      const childArgs = [
+        path.resolve(__filename),
+        'doctor',
+        '--single-repo',
+        '--target',
+        repoPath,
+        ...(options.dropStaleLocks ? [] : ['--keep-stale-locks']),
+        ...(options.skipAgents ? ['--skip-agents'] : []),
+        ...(options.skipPackageJson ? ['--skip-package-json'] : []),
+        ...(options.skipGitignore ? ['--no-gitignore'] : []),
+        ...(options.dryRun ? ['--dry-run'] : []),
+        // Recursive child doctor runs should report pending PR state immediately instead of blocking the parent loop.
+        '--no-wait-for-merge',
+        ...(options.verboseAutoFinish ? ['--verbose-auto-finish'] : []),
+        ...(options.json ? ['--json'] : []),
+        ...(options.allowProtectedBaseWrite ? ['--allow-protected-base-write'] : []),
+      ];
+      const startedAt = Date.now();
+      const nestedResult = options.json
+        ? run(process.execPath, childArgs, { cwd: topRepoRoot })
+        : cp.spawnSync(process.execPath, childArgs, {
+          cwd: topRepoRoot,
+          encoding: 'utf8',
+          stdio: 'inherit',
+        });
       if (isSpawnFailure(nestedResult)) {
         throw nestedResult.error;
       }
@@ -5181,9 +5312,12 @@ function doctor(rawArgs) {
             },
         );
       } else {
-        if (nestedResult.stdout) process.stdout.write(nestedResult.stdout);
-        if (nestedResult.stderr) process.stderr.write(nestedResult.stderr);
-        process.stdout.write('\n');
+        console.log(
+          `[${TOOL_NAME}] Doctor target complete: ${repoPath} [${progressLabel}] in ${formatElapsedDuration(Date.now() - startedAt)}.`,
+        );
+        if (repoIndex < discoveredRepos.length - 1) {
+          process.stdout.write('\n');
+        }
       }
     }
 
@@ -5232,6 +5366,7 @@ function doctor(rawArgs) {
     : autoFinishReadyAgentBranches(scanResult.repoRoot, {
       baseBranch: currentBaseBranch,
       dryRun: singleRepoOptions.dryRun,
+      waitForMerge: singleRepoOptions.waitForMerge,
     });
   const safe = scanResult.guardexEnabled === false || (scanResult.errors === 0 && scanResult.warnings === 0);
   const musafe = safe;
@@ -5273,16 +5408,10 @@ function doctor(rawArgs) {
     setExitCodeFromScan(scanResult);
     return;
   }
-  if (autoFinishSummary.enabled) {
-    console.log(
-      `[${TOOL_NAME}] Auto-finish sweep (base=${currentBaseBranch}): attempted=${autoFinishSummary.attempted}, completed=${autoFinishSummary.completed}, skipped=${autoFinishSummary.skipped}, failed=${autoFinishSummary.failed}`,
-    );
-    for (const detail of autoFinishSummary.details) {
-      console.log(`[${TOOL_NAME}]   ${detail}`);
-    }
-  } else if (autoFinishSummary.details.length > 0) {
-    console.log(`[${TOOL_NAME}] ${autoFinishSummary.details[0]}`);
-  }
+  printAutoFinishSummary(autoFinishSummary, {
+    baseBranch: currentBaseBranch,
+    verbose: singleRepoOptions.verboseAutoFinish,
+  });
   if (safe) {
     console.log(`[${TOOL_NAME}] ✅ Repo is fully safe.`);
   } else {
