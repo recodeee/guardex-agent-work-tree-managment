@@ -31,20 +31,6 @@ I was running ~30 Codex agents in parallel and hit a wall: they kept working on 
 GitGuardex exists to stop that loop. Every agent gets its own worktree, claims the files it's touching, and can't clobber files another agent has claimed. Your local branch stays clean; agents stay in their lanes.
 
 
-```text
-Guardian T-Rex for your multi-agent repo. Isolated worktrees, file locks, and PR-only merges stop parallel Codex & Claude agents from overwriting each other's work. Auto-wires Oh My Codex, Oh My Claude, OpenSpec, and Caveman.
-```
-
-
-<!-- ===================================================================== -->
-<!-- 2) README INSTALL HERO SECTION                                        -->
-<!-- ===================================================================== -->
-<!--                                                                       -->
-<!-- Drop this near the top of README.md — above "The problem" or right    -->
-<!-- after the badges row. The code block gets GitHub's automatic copy     -->
-<!-- button in the top-right corner on hover.                              -->
-<!-- ===================================================================== -->
-
 <p align="center">
   <img alt="Install GitGuardex" src="https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/install-hero.svg" width="680">
 </p>
