@@ -9,6 +9,9 @@
 > [!WARNING]
 > Not affiliated with OpenAI, Anthropic, or Codex. Not an official tool.
 
+> [!IMPORTANT]
+> GitGuardex is still being tested in real multi-agent repos. If something feels rough or broken, especially around cleanup, finish, merge, or recovery flows, sorry. We need to test those paths under real load first, and we'll patch issues as we find them.
+
 ---
 
 ## The problem
