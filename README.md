@@ -155,16 +155,21 @@ python3 scripts/agent-file-locks.py claim \
 # 3) Implement + verify
 npm test
 
-# 4) Finish (commit + push + PR + merge)
+# 4) Finish (commit + push + PR + merge + cleanup)
 bash scripts/agent-branch-finish.sh \
   --branch "$(git rev-parse --abbrev-ref HEAD)" \
-  --base dev --via-pr --wait-for-merge
-
-# 5) Optional: cleanup after merge
-gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
+  --base main --via-pr --wait-for-merge --cleanup
 ```
 
 If you use `scripts/codex-agent.sh`, the finish flow runs automatically when the Codex session exits — it auto-commits, retries once after syncing if the base moved during the run, then pushes and opens the PR.
+
+Guardex normally prunes merged sandboxes for you as part of the finish flow. If you simply do not want a local sandbox/worktree anymore, remove that worktree directly; delete the branch too only if you are intentionally abandoning that lane:
+
+```sh
+git worktree remove .omx/agent-worktrees/<worktree-name>
+# Claude Code sandboxes live under .omc/agent-worktrees/<worktree-name>
+git branch -D agent/<role>/<task>   # optional, only if you are discarding the lane
+```
 
 Running Codex across several existing worktrees (e.g. from VS Code Source Control)? Finalize everything ready at once:
 
@@ -489,6 +494,7 @@ Expanded flow:
 
 - `scripts/codex-agent.sh` enforces OpenSpec workspaces before launching Codex.
 - `scripts/agent-branch-start.sh` can scaffold both `openspec/changes/<slug>/` and `openspec/plan/<slug>/` when `GUARDEX_OPENSPEC_AUTO_INIT=true`.
+- The collaboration section in `tasks.md` is there for real cleanup handoffs too. If the first Codex/Claude session finishes the implementation work but hits a usage limit before `agent-branch-finish --cleanup`, hand the same sandbox to another agent, let that agent finish cleanup, and record the join/handoff in the change task.
 
 Environment variables:
 
@@ -553,7 +559,7 @@ gh workflow run sync-frontend-mirror.yml
 
 Being honest about where this still has issues:
 
-- **Usage limit mid-task.** When an agent hits its Codex/Claude usage limit partway through, the cleanup flow currently has to be handed to a different agent. It works, but the handoff is uglier than I'd like.
+- **Usage limit mid-task.** When an agent hits its Codex/Claude usage limit partway through, another agent may need to take over the same sandbox and run the remaining finish/cleanup steps. The OpenSpec collaboration checklist is there to capture that handoff, but it is still uglier than I'd like.
 - **Conflict-stuck probes.** Fixed in v7.0.2 — earlier versions could leak `__source-probe-*` worktrees when the sync-guard rebase hit conflicts. If you're on an older release, `gx cleanup` sweeps these.
 - **Windows.** Most of the hook surface assumes a POSIX shell. Use WSL or symlink-enabled git if you're on Windows.
 
