@@ -519,6 +519,11 @@ npm pack --dry-run
 <details>
 <summary><strong>v7.x</strong></summary>
 
+### v7.0.15
+- `gx doctor` no longer blocks recursive nested protected-repo repairs on child PR merge waits; nested sandboxes now force `--no-wait-for-merge` so the parent repair loop can continue.
+- `gx setup` can now refresh managed files from protected `main` through a temporary sandbox branch/worktree, sync the managed outputs back to the visible base checkout, and prune the sandbox afterward.
+- Bumped `@imdeadpool/guardex` from `7.0.14` → `7.0.15` after npm rejected a republish over the already-published `7.0.14`.
+
 ### v7.0.14
 - Bumped `@imdeadpool/guardex` from `7.0.13` → `7.0.14` after npm rejected a republish over the already-published `7.0.13`.
 - No package payload changes beyond the release metadata bump; this release exists so `npm publish` can proceed with a fresh semver.
