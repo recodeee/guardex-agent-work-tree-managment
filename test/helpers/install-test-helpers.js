@@ -136,6 +136,9 @@ function runHumanCmd(cmd, args, cwd, options = {}) {
 
 function assertZeroCopyManagedGitignore(content) {
   assert.match(content, /# multiagent-safety:START/);
+  assert.match(content, /^!\.vscode\/$/m);
+  assert.match(content, /^\.vscode\/\*$/m);
+  assert.match(content, /^!\.vscode\/settings\.json$/m);
   assert.match(content, /^scripts\/agent-session-state\.js$/m);
   assert.match(content, /^scripts\/guardex-docker-loader\.sh$/m);
   assert.match(content, /^scripts\/guardex-env\.sh$/m);
@@ -145,6 +148,18 @@ function assertZeroCopyManagedGitignore(content) {
   assert.doesNotMatch(content, /^scripts\/agent-file-locks\.py$/m);
   assert.match(content, /^\.githooks$/m);
   assert.match(content, /# multiagent-safety:END/);
+}
+
+function assertManagedRepoVscodeSettings(settings) {
+  assert.equal(typeof settings, 'object');
+  assert.notEqual(settings, null);
+  assert.equal(Array.isArray(settings['git.repositoryScanIgnoredFolders']), true);
+  assert.deepEqual(settings['git.repositoryScanIgnoredFolders'], [
+    '.omx/agent-worktrees',
+    '**/.omx/agent-worktrees',
+    '.omc/agent-worktrees',
+    '**/.omc/agent-worktrees',
+  ]);
 }
 
 function createFakeBin(name, scriptBody, prefix = `guardex-fake-${name}-`) {
@@ -520,6 +535,7 @@ module.exports = {
   runCmd,
   runHumanCmd,
   assertZeroCopyManagedGitignore,
+  assertManagedRepoVscodeSettings,
   createFakeBin,
   createFakeNpmScript,
   createFakeOpenSpecScript,

@@ -221,13 +221,24 @@ const GITIGNORE_MARKER_START = '# multiagent-safety:START';
 const GITIGNORE_MARKER_END = '# multiagent-safety:END';
 const CODEX_WORKTREE_RELATIVE_DIR = path.join('.omx', 'agent-worktrees');
 const CLAUDE_WORKTREE_RELATIVE_DIR = path.join('.omc', 'agent-worktrees');
+const SHARED_VSCODE_SETTINGS_RELATIVE = path.posix.join('.vscode', 'settings.json');
+const REPO_SCAN_IGNORED_FOLDERS_SETTING = 'git.repositoryScanIgnoredFolders';
 const AGENT_WORKTREE_RELATIVE_DIRS = [
   CODEX_WORKTREE_RELATIVE_DIR,
   CLAUDE_WORKTREE_RELATIVE_DIR,
 ];
+const MANAGED_REPO_SCAN_IGNORED_FOLDERS = [
+  '.omx/agent-worktrees',
+  '**/.omx/agent-worktrees',
+  '.omc/agent-worktrees',
+  '**/.omc/agent-worktrees',
+];
 const MANAGED_GITIGNORE_PATHS = [
   '.omx/',
   '.omc/',
+  '!.vscode/',
+  '.vscode/*',
+  '!.vscode/settings.json',
   'scripts/agent-session-state.js',
   'scripts/guardex-docker-loader.sh',
   'scripts/guardex-env.sh',
@@ -1564,6 +1575,184 @@ function ensureManagedGitignore(repoRoot, dryRun) {
     fs.writeFileSync(gitignorePath, `${existing}${separator}${managedBlock}\n`, 'utf8');
   }
   return { status: 'updated', file: '.gitignore', note: 'appended gitguardex-managed entries' };
+}
+
+function stripJsonComments(source) {
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (inLineComment) {
+      if (current === '\n' || current === '\r') {
+        inLineComment = false;
+        result += current;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === '*' && next === '/') {
+        inBlockComment = false;
+        index += 1;
+        continue;
+      }
+      if (current === '\n' || current === '\r') {
+        result += current;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += current;
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (current === '\\') {
+        escapeNext = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      result += current;
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    result += current;
+  }
+
+  return result;
+}
+
+function stripJsonTrailingCommas(source) {
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index];
+
+    if (inString) {
+      result += current;
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (current === '\\') {
+        escapeNext = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      result += current;
+      continue;
+    }
+
+    if (current === ',') {
+      let lookahead = index + 1;
+      while (lookahead < source.length && /\s/.test(source[lookahead])) {
+        lookahead += 1;
+      }
+      if (source[lookahead] === '}' || source[lookahead] === ']') {
+        continue;
+      }
+    }
+
+    result += current;
+  }
+
+  return result;
+}
+
+function parseJsonObjectLikeFile(source, relativePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonTrailingCommas(stripJsonComments(source)));
+  } catch (error) {
+    throw new Error(`Unable to parse ${relativePath} as JSON or JSONC: ${error.message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${relativePath} must contain a top-level object.`);
+  }
+
+  return parsed;
+}
+
+function uniqueStringList(values) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    if (typeof value !== 'string' || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+
+  return result;
+}
+
+function buildRepoVscodeSettings(existingSettings = {}) {
+  const nextSettings = { ...existingSettings };
+  const existingIgnoredFolders = Array.isArray(existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING])
+    ? existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING]
+    : [];
+
+  nextSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING] = uniqueStringList([
+    ...existingIgnoredFolders,
+    ...MANAGED_REPO_SCAN_IGNORED_FOLDERS,
+  ]);
+
+  return nextSettings;
+}
+
+function ensureRepoVscodeSettings(repoRoot, dryRun) {
+  const settingsPath = path.join(repoRoot, SHARED_VSCODE_SETTINGS_RELATIVE);
+  const destinationExists = fs.existsSync(settingsPath);
+  const existingContent = destinationExists ? fs.readFileSync(settingsPath, 'utf8') : '';
+  const existingSettings = destinationExists
+    ? parseJsonObjectLikeFile(existingContent, SHARED_VSCODE_SETTINGS_RELATIVE)
+    : {};
+  const nextContent = `${JSON.stringify(buildRepoVscodeSettings(existingSettings), null, 2)}\n`;
+
+  if (destinationExists && existingContent === nextContent) {
+    return { status: 'unchanged', file: SHARED_VSCODE_SETTINGS_RELATIVE };
+  }
+
+  ensureParentDir(repoRoot, settingsPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(settingsPath, nextContent, 'utf8');
+  }
+
+  return {
+    status: destinationExists ? 'updated' : 'created',
+    file: SHARED_VSCODE_SETTINGS_RELATIVE,
+    note: 'shared VS Code repo scan ignores for Guardex worktrees',
+  };
 }
 
 function configureHooks(repoRoot, dryRun) {
@@ -5426,6 +5615,7 @@ function runInstallInternal(options) {
   if (!options.skipGitignore) {
     operations.push(ensureManagedGitignore(repoRoot, Boolean(options.dryRun)));
   }
+  operations.push(ensureRepoVscodeSettings(repoRoot, Boolean(options.dryRun)));
 
   operations.push(...ensureOmxScaffold(repoRoot, Boolean(options.dryRun)));
 
@@ -5484,6 +5674,7 @@ function runFixInternal(options) {
   if (!options.skipGitignore) {
     operations.push(ensureManagedGitignore(repoRoot, Boolean(options.dryRun)));
   }
+  operations.push(ensureRepoVscodeSettings(repoRoot, Boolean(options.dryRun)));
 
   operations.push(...ensureOmxScaffold(repoRoot, Boolean(options.dryRun)));
 

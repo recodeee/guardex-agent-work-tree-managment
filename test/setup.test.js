@@ -26,6 +26,7 @@ const {
   runCmd,
   runHumanCmd,
   assertZeroCopyManagedGitignore,
+  assertManagedRepoVscodeSettings,
   createFakeBin,
   createFakeNpmScript,
   createFakeOpenSpecScript,
@@ -93,6 +94,7 @@ test('setup provisions workflow files and repo config', () => {
     '.github/workflows/cr.yml',
     '.omx/state/agent-file-locks.json',
     '.gitignore',
+    '.vscode/settings.json',
     'AGENTS.md',
   ];
 
@@ -155,6 +157,9 @@ test('setup provisions workflow files and repo config', () => {
   assert.match(gitignoreContent, /oh-my-codex\//);
   assert.match(gitignoreContent, /\.omx\/state\/agent-file-locks\.json/);
   assert.match(gitignoreContent, /# multiagent-safety:END/);
+
+  const vscodeSettings = JSON.parse(fs.readFileSync(path.join(repoDir, '.vscode', 'settings.json'), 'utf8'));
+  assertManagedRepoVscodeSettings(vscodeSettings);
 
   result = runCmd('git', ['config', '--get', 'core.hooksPath'], repoDir);
   assert.equal(result.status, 0, result.stderr);
@@ -1108,6 +1113,36 @@ test('setup appends managed gitignore block without clobbering existing entries'
   const second = fs.readFileSync(path.join(repoDir, '.gitignore'), 'utf8');
   const blockStarts = second.match(/# multiagent-safety:START/g) || [];
   assert.equal(blockStarts.length, 1, 'managed gitignore block should be unique');
+});
+
+test('setup merges Guardex repo-scan ignores into tracked VS Code workspace settings', () => {
+  const repoDir = initRepo();
+  const vscodeDir = path.join(repoDir, '.vscode');
+  fs.mkdirSync(vscodeDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(vscodeDir, 'settings.json'),
+    '{\n'
+      + '  // keep custom workspace settings\n'
+      + '  "editor.formatOnSave": true,\n'
+      + '  "git.repositoryScanIgnoredFolders": [\n'
+      + '    "custom-folder",\n'
+      + '  ],\n'
+      + '}\n',
+    'utf8',
+  );
+
+  const result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const settings = JSON.parse(fs.readFileSync(path.join(vscodeDir, 'settings.json'), 'utf8'));
+  assert.equal(settings['editor.formatOnSave'], true);
+  assert.deepEqual(settings['git.repositoryScanIgnoredFolders'], [
+    'custom-folder',
+    '.omx/agent-worktrees',
+    '**/.omx/agent-worktrees',
+    '.omc/agent-worktrees',
+    '**/.omc/agent-worktrees',
+  ]);
 });
 
 
