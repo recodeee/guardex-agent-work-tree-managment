@@ -21,3 +21,15 @@ The Active Agents VS Code companion SHALL declare startup activation in both shi
 - **WHEN** the extension install regression suite reads those manifests
 - **THEN** both manifests SHALL include `onStartupFinished`
 - **AND** the installed extension manifest SHALL preserve that same activation event list
+
+### Requirement: Active Agents extension installs a newer workspace build and prompts reload
+
+The Active Agents VS Code companion SHALL install a newer workspace-shipped build of itself when one is available and SHALL offer a reload action so the updated companion takes effect immediately.
+
+#### Scenario: Running companion sees a newer workspace build
+
+- **GIVEN** the running Active Agents extension version is older than `vscode/guardex-active-agents/package.json` in the open workspace
+- **AND** the workspace contains `scripts/install-vscode-active-agents-extension.js`
+- **WHEN** the companion activates
+- **THEN** it SHALL run that install script with the workspace root as the current working directory
+- **AND** it SHALL show a message offering `Reload Window`

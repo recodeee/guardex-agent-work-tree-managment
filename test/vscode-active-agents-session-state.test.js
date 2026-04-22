@@ -221,6 +221,7 @@ function createMockVscode(tempRoot) {
     openedDocuments: [],
     shownDocuments: [],
     infoMessages: [],
+    infoResponses: [],
     inputResponses: [],
     quickPickCalls: [],
     quickPickResponse: undefined,
@@ -402,7 +403,7 @@ function createMockVscode(tempRoot) {
           if (typeof args[0] === 'string') {
             registrations.informationMessages.push(args[0]);
           }
-          return undefined;
+          return registrations.infoResponses.shift();
         },
         showErrorMessage: async (message) => {
           registrations.errorMessages.push(message);
@@ -879,6 +880,63 @@ test('active-agents extension edits require a higher manifest version than the b
       `but version ${liveManifest.version} did not increase above ${baseManifest.version}.`,
     ].join(' '),
   );
+});
+
+test('active-agents extension auto-installs a newer workspace build and offers reload', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-autoupdate-'));
+  const repoManifest = {
+    ...readExtensionManifest(),
+    version: '9.9.9',
+  };
+  const repoManifestPath = path.join(tempRoot, 'vscode', 'guardex-active-agents', 'package.json');
+  const repoInstallScriptPath = path.join(tempRoot, 'scripts', 'install-vscode-active-agents-extension.js');
+  fs.mkdirSync(path.dirname(repoManifestPath), { recursive: true });
+  fs.writeFileSync(repoManifestPath, `${JSON.stringify(repoManifest, null, 2)}\n`, 'utf8');
+  fs.mkdirSync(path.dirname(repoInstallScriptPath), { recursive: true });
+  fs.writeFileSync(repoInstallScriptPath, '#!/usr/bin/env node\n', 'utf8');
+
+  const execCalls = [];
+  const originalExecFile = cp.execFile;
+  cp.execFile = (file, args, options, callback) => {
+    execCalls.push({ file, args, options });
+    callback(null, '[guardex-active-agents] ok\n', '');
+  };
+
+  try {
+    const { registrations, vscode } = createMockVscode(tempRoot);
+    registrations.infoResponses.push('Reload Window');
+    const extension = loadExtensionWithMockVscode(vscode);
+    const context = {
+      subscriptions: [],
+      extension: {
+        packageJSON: {
+          version: '0.0.2',
+        },
+      },
+    };
+
+    extension.activate(context);
+    await flushAsyncWork();
+
+    assert.equal(execCalls.length, 1);
+    assert.equal(execCalls[0].file, process.execPath);
+    assert.deepEqual(execCalls[0].args, [repoInstallScriptPath]);
+    assert.equal(execCalls[0].options.cwd, tempRoot);
+    assert.equal(execCalls[0].options.encoding, 'utf8');
+    assert.match(
+      registrations.informationMessages.at(-1),
+      /GitGuardex Active Agents updated to 9\.9\.9/,
+    );
+    assert.deepEqual(registrations.infoMessages.at(-1).slice(1), ['Reload Window', 'Later']);
+    assert.equal(
+      registrations.executedCommands.some(
+        (entry) => entry.command === 'workbench.action.reloadWindow',
+      ),
+      true,
+    );
+  } finally {
+    cp.execFile = originalExecFile;
+  }
 });
 
 test('active-agents extension registers tree and decoration providers', async () => {

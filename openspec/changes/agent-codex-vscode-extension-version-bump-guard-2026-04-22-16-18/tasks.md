@@ -8,15 +8,16 @@ This change is complete only when **all** of the following are true:
 
 ## 1. Specification
 
-- [x] 1.1 Finalize the scope around bumping the VS Code extension version whenever shipped plugin files change and activating the companion on VS Code startup.
-- [x] 1.2 Define the normative version + startup requirements in `specs/vscode-active-agents-extension/spec.md`.
+- [x] 1.1 Finalize the scope around bumping the VS Code extension version whenever shipped plugin files change, activating the companion on VS Code startup, and auto-installing newer workspace builds.
+- [x] 1.2 Define the normative version + startup + auto-update requirements in `specs/vscode-active-agents-extension/spec.md`.
 
 ## 2. Implementation
 
-- [x] 2.1 Bump the live/template Active Agents extension manifests from `0.0.1` to `0.0.2`.
+- [x] 2.1 Bump the live/template Active Agents extension manifests from `0.0.1` to `0.0.3`.
 - [x] 2.2 Make the extension install regression read the current manifest version instead of hardcoding `0.0.1`.
 - [x] 2.3 Add a focused regression that fails when extension-shipping files change without a higher version than the base branch.
 - [x] 2.4 Add `onStartupFinished` to the live/template manifests and lock the installed-manifest/startup contract in the focused regression suite.
+- [x] 2.5 Auto-install a newer workspace companion build on activate and offer a `Reload Window` action after the update lands.
 
 ## 3. Verification
 
