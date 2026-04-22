@@ -228,6 +228,7 @@ function createMockVscode(tempRoot) {
     informationMessages: [],
     errorMessages: [],
     warningMessages: [],
+    webviewPanels: [],
     fileWatchers: [],
     watchers: [],
     workspaceFolderListeners: [],
@@ -341,6 +342,9 @@ function createMockVscode(tempRoot) {
         Left: 1,
         Right: 2,
       },
+      ViewColumn: {
+        Beside: 2,
+      },
       commands: {
         executeCommand: async (command, ...args) => {
           registrations.executedCommands.push({ command, args });
@@ -437,6 +441,43 @@ function createMockVscode(tempRoot) {
         showTextDocument: async (document, options) => {
           registrations.shownDocuments.push({ document, options });
           return { document };
+        },
+        createWebviewPanel: (viewType, title, column, options) => {
+          const disposeListeners = [];
+          const panel = {
+            viewType,
+            title,
+            column,
+            options,
+            disposed: false,
+            revealCalls: [],
+            webview: {
+              html: '',
+            },
+            onDidDispose(listener) {
+              disposeListeners.push(listener);
+              return disposable(() => {
+                const index = disposeListeners.indexOf(listener);
+                if (index >= 0) {
+                  disposeListeners.splice(index, 1);
+                }
+              });
+            },
+            reveal(nextColumn) {
+              panel.revealCalls.push(nextColumn);
+            },
+            dispose() {
+              if (panel.disposed) {
+                return;
+              }
+              panel.disposed = true;
+              for (const listener of [...disposeListeners]) {
+                listener();
+              }
+            },
+          };
+          registrations.webviewPanels.push(panel);
+          return panel;
         },
         createTreeView: (viewId, options) => {
           const selectionListeners = [];
@@ -977,6 +1018,75 @@ test('session-schema derives repo change rows from root git status', () => {
   );
 });
 
+test('session-schema reads inspect data from base-branch config, log tail, and held locks', () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-active-session-inspect-'));
+  const remoteRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-active-session-inspect-remote-'));
+  const branch = 'agent/codex/inspect-task';
+
+  initGitRepo(tempRoot);
+  runGit(tempRoot, ['checkout', '-b', 'main']);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+  runGit(remoteRoot, ['init', '--bare']);
+  runGit(tempRoot, ['remote', 'add', 'origin', remoteRoot]);
+  runGit(tempRoot, ['push', '-u', 'origin', 'main']);
+  runGit(tempRoot, ['config', 'multiagent.baseBranch', 'main']);
+  runGit(tempRoot, ['checkout', '-b', branch]);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\ninspect\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'inspect ahead commit']);
+
+  const logPath = path.join(
+    tempRoot,
+    '.omx',
+    'logs',
+    `agent-${sessionSchema.sanitizeBranchForFile(branch)}.log`,
+  );
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.writeFileSync(logPath, 'log line 1\nlog line 2\n', 'utf8');
+
+  const lockPath = path.join(tempRoot, '.omx', 'state', 'agent-file-locks.json');
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, `${JSON.stringify({
+    locks: {
+      'src/alpha.js': {
+        branch,
+        claimed_at: '2026-04-22T09:10:00.000Z',
+        allow_delete: false,
+      },
+      'src/beta.js': {
+        branch,
+        claimed_at: '2026-04-22T09:11:00.000Z',
+        allow_delete: true,
+      },
+      'src/foreign.js': {
+        branch: 'agent/codex/other-task',
+        claimed_at: '2026-04-22T09:12:00.000Z',
+        allow_delete: false,
+      },
+    },
+  }, null, 2)}\n`, 'utf8');
+
+  const inspectData = sessionSchema.readSessionInspectData({
+    repoRoot: tempRoot,
+    branch,
+    worktreePath: tempRoot,
+  });
+
+  assert.equal(inspectData.baseBranch, 'main');
+  assert.equal(inspectData.compareRef, 'origin/main');
+  assert.equal(inspectData.aheadCount, 1);
+  assert.equal(inspectData.behindCount, 0);
+  assert.equal(inspectData.logPath, logPath);
+  assert.equal(inspectData.logExists, true);
+  assert.match(inspectData.logTailText, /log line 2/);
+  assert.deepEqual(
+    inspectData.heldLocks.map((entry) => entry.relativePath),
+    ['src/alpha.js', 'src/beta.js'],
+  );
+});
+
 test('install-vscode-active-agents-extension installs the current extension version and prunes older copies', () => {
   const tempExtensionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-ext-'));
   const manifest = readExtensionManifest();
@@ -1127,13 +1237,14 @@ test('active-agents extension registers tree and decoration providers', async ()
   assert.equal(registrations.providers.length, 1);
   assert.equal(registrations.providers[0].viewId, 'gitguardex.activeAgents');
   assert.equal(registrations.decorationProviders.length, 1);
-  assert.equal(registrations.fileWatchers.length, 3);
+  assert.equal(registrations.fileWatchers.length, 4);
   assert.deepEqual(
     registrations.fileWatchers.map((watcher) => watcher.pattern),
     [
       '**/.omx/state/active-sessions/*.json',
       '**/.omx/state/agent-file-locks.json',
       '**/{.omx,.omc}/agent-worktrees/**/AGENT.lock',
+      '**/.omx/logs/*.log',
     ],
   );
   assert.equal(registrations.workspaceFolderListeners.length, 1);
@@ -1141,6 +1252,7 @@ test('active-agents extension registers tree and decoration providers', async ()
   const provider = registrations.providers[0].provider;
   assert.equal(typeof provider.getTreeItem, 'function');
   assert.equal(typeof registrations.commands.get('gitguardex.activeAgents.startAgent'), 'function');
+  assert.equal(typeof registrations.commands.get('gitguardex.activeAgents.inspect'), 'function');
 
   const rootItems = await provider.getChildren();
   assert.equal(rootItems.length, 1);
@@ -1922,7 +2034,7 @@ test('active-agents extension groups blocked, working, idle, stalled, and dead s
   }
 });
 
-test('active-agents extension watches active sessions, lock files, and session git indexes', async () => {
+test('active-agents extension watches active sessions, lock files, logs, and session git indexes', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-watchers-'));
   const worktreePath = path.join(tempRoot, 'sandbox');
   initGitRepo(worktreePath);
@@ -1952,6 +2064,7 @@ test('active-agents extension watches active sessions, lock files, and session g
       '**/.omx/state/active-sessions/*.json',
       '**/.omx/state/agent-file-locks.json',
       '**/{.omx,.omc}/agent-worktrees/**/AGENT.lock',
+      '**/.omx/logs/*.log',
       path.join(worktreePath, '.git', 'index'),
     ],
   );
@@ -1962,7 +2075,7 @@ test('active-agents extension watches active sessions, lock files, and session g
   await new Promise((resolve) => setTimeout(resolve, 350));
   await flushAsyncWork();
 
-  assert.equal(registrations.fileWatchers[3].disposed, true);
+  assert.equal(registrations.fileWatchers[4].disposed, true);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
@@ -1984,6 +2097,7 @@ test('active-agents extension debounces refresh events with a trailing 250ms tim
   registrations.fileWatchers[0].fireChange({ fsPath: path.join(tempRoot, '.omx', 'state', 'active-sessions', 'a.json') });
   registrations.fileWatchers[1].fireChange({ fsPath: path.join(tempRoot, '.omx', 'state', 'agent-file-locks.json') });
   registrations.fileWatchers[2].fireChange({ fsPath: path.join(tempRoot, '.omx', 'agent-worktrees', 'agent__codex__a', 'AGENT.lock') });
+  registrations.fileWatchers[3].fireChange({ fsPath: path.join(tempRoot, '.omx', 'logs', 'agent-agent__codex__a.log') });
   assert.equal(provider.onDidChangeTreeDataEmitter.fireCount, 0);
 
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -2318,6 +2432,111 @@ test('active-agents extension launches finish and sync commands in session termi
     { text: 'gx sync', addNewLine: true },
   ]);
   assert.equal(registrations.terminals[1].shown, true);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension opens and refreshes the inspect panel from shared watcher events', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-inspect-panel-'));
+  const remoteRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-inspect-remote-'));
+  const branch = 'agent/codex/inspect-task';
+
+  initGitRepo(tempRoot);
+  runGit(tempRoot, ['checkout', '-b', 'main']);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+  runGit(remoteRoot, ['init', '--bare']);
+  runGit(tempRoot, ['remote', 'add', 'origin', remoteRoot]);
+  runGit(tempRoot, ['push', '-u', 'origin', 'main']);
+  runGit(tempRoot, ['config', 'multiagent.baseBranch', 'main']);
+  runGit(tempRoot, ['checkout', '-b', branch]);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\ninspect\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'inspect ahead commit']);
+
+  const sessionPath = sessionSchema.sessionFilePathForBranch(tempRoot, branch);
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+  fs.writeFileSync(
+    sessionPath,
+    `${JSON.stringify(sessionSchema.buildSessionRecord({
+      repoRoot: tempRoot,
+      branch,
+      taskName: 'inspect-task',
+      agentName: 'codex',
+      worktreePath: tempRoot,
+      pid: process.pid,
+      cliName: 'codex',
+    }), null, 2)}\n`,
+    'utf8',
+  );
+
+  const lockPath = path.join(tempRoot, '.omx', 'state', 'agent-file-locks.json');
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, `${JSON.stringify({
+    locks: {
+      'src/owned-file.txt': {
+        branch,
+        claimed_at: '2026-04-22T09:13:00.000Z',
+        allow_delete: false,
+      },
+    },
+  }, null, 2)}\n`, 'utf8');
+
+  const logPath = path.join(
+    tempRoot,
+    '.omx',
+    'logs',
+    `agent-${sessionSchema.sanitizeBranchForFile(branch)}.log`,
+  );
+  fs.mkdirSync(path.dirname(logPath), { recursive: true });
+  fs.writeFileSync(logPath, 'log line 1\n', 'utf8');
+
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  vscode.workspace.findFiles = async (pattern) => {
+    if (pattern === '**/.omx/state/active-sessions/*.json') {
+      return [{ fsPath: sessionPath }];
+    }
+    return [];
+  };
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+  await flushAsyncWork();
+
+  const provider = registrations.providers[0].provider;
+  const [repoItem] = await provider.getChildren();
+  const [agentsSection] = await provider.getChildren(repoItem);
+  const [groupSection] = await provider.getChildren(agentsSection);
+  const [sessionItem] = await provider.getChildren(groupSection);
+
+  await registrations.commands.get('gitguardex.activeAgents.inspect')(sessionItem.session);
+
+  assert.equal(registrations.webviewPanels.length, 1);
+  const panel = registrations.webviewPanels[0];
+  assert.equal(panel.viewType, 'gitguardex.activeAgents.inspect');
+  assert.match(panel.title, /Inspect inspect-task/);
+  assert.match(panel.webview.html, /origin\/main/);
+  assert.match(panel.webview.html, /1 ahead/);
+  assert.match(panel.webview.html, /0 behind/);
+  assert.match(panel.webview.html, /src\/owned-file.txt/);
+  assert.match(panel.webview.html, /log line 1/);
+
+  fs.writeFileSync(logPath, 'log line 1\nlog line 2\n', 'utf8');
+  const logWatcher = registrations.watchers.find((watcher) => watcher.pattern === '**/.omx/logs/*.log');
+  assert.ok(logWatcher, 'expected log watcher registration');
+  logWatcher.fireChange({ fsPath: logPath });
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  await flushAsyncWork();
+
+  assert.match(panel.webview.html, /log line 2/);
+
+  await registrations.commands.get('gitguardex.activeAgents.inspect')(sessionItem.session);
+  assert.equal(registrations.webviewPanels.length, 1);
+  assert.equal(panel.revealCalls.length, 1);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();

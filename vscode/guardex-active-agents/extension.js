@@ -6,6 +6,7 @@ const {
   formatElapsedFrom,
   readActiveSessions,
   readRepoChanges,
+  readSessionInspectData,
   sanitizeBranchForFile,
 } = require('./session-schema.js');
 
@@ -16,6 +17,7 @@ const LOCK_FILE_RELATIVE = path.join('.omx', 'state', 'agent-file-locks.json');
 const ACTIVE_SESSION_FILES_GLOB = '**/.omx/state/active-sessions/*.json';
 const AGENT_FILE_LOCKS_GLOB = '**/.omx/state/agent-file-locks.json';
 const WORKTREE_AGENT_LOCKS_GLOB = '**/{.omx,.omc}/agent-worktrees/**/AGENT.lock';
+const AGENT_LOG_FILES_GLOB = '**/.omx/logs/*.log';
 const SESSION_SCAN_EXCLUDE_GLOB = '**/{node_modules,.git,.omx/agent-worktrees,.omc/agent-worktrees}/**';
 const WORKTREE_LOCK_SCAN_EXCLUDE_GLOB = '**/{node_modules,.git}/**';
 const SESSION_SCAN_LIMIT = 200;
@@ -25,6 +27,7 @@ const ACTIVE_AGENTS_INSTALL_SCRIPT_RELATIVE = path.join('scripts', 'install-vsco
 const RELOAD_WINDOW_ACTION = 'Reload Window';
 const UPDATE_LATER_ACTION = 'Later';
 const REFRESH_POLL_INTERVAL_MS = 30_000;
+const INSPECT_PANEL_VIEW_TYPE = 'gitguardex.activeAgents.inspect';
 const SESSION_ACTIVITY_GROUPS = [
   { kind: 'blocked', label: 'BLOCKED' },
   { kind: 'working', label: 'WORKING NOW' },
@@ -167,6 +170,134 @@ function buildActiveAgentsStatusTooltip(selectedSession, summary) {
     summary?.deadCount ? formatCountLabel(summary.deadCount, 'dead session') : '',
     'Click to open Source Control.',
   ].filter(Boolean).join('\n');
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function formatInspectBranchSummary(inspectData) {
+  if (Number.isInteger(inspectData?.aheadCount) && Number.isInteger(inspectData?.behindCount)) {
+    return `${inspectData.aheadCount} ahead · ${inspectData.behindCount} behind vs ${inspectData.compareRef}`;
+  }
+  return `Branch comparison unavailable vs ${inspectData?.compareRef || 'origin/dev'}`;
+}
+
+function inspectPanelTitle(session) {
+  return `Inspect ${sessionDisplayLabel(session)}`;
+}
+
+function renderInspectPanelHtml(session, inspectData) {
+  const heldLocksMarkup = Array.isArray(inspectData?.heldLocks) && inspectData.heldLocks.length > 0
+    ? `<ul>${inspectData.heldLocks.map((entry) => (
+        `<li><code>${escapeHtml(entry.relativePath)}</code>${entry.allowDelete ? ' <span class="pill">delete ok</span>' : ''}${entry.claimedAt ? ` <span class="muted">${escapeHtml(entry.claimedAt)}</span>` : ''}</li>`
+      )).join('')}</ul>`
+    : '<p class="muted">No held locks recorded for this session.</p>';
+  const logContent = inspectData?.logTailText
+    ? escapeHtml(inspectData.logTailText)
+    : 'No log output available.';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: var(--vscode-font-family);
+    }
+    body {
+      padding: 16px;
+      color: var(--vscode-foreground);
+      background: var(--vscode-editor-background);
+    }
+    h1, h2 {
+      margin: 0 0 12px;
+      font-weight: 600;
+    }
+    h2 {
+      margin-top: 20px;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--vscode-descriptionForeground);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(140px, 220px) 1fr;
+      gap: 8px 12px;
+      margin: 0;
+    }
+    dt {
+      color: var(--vscode-descriptionForeground);
+    }
+    dd {
+      margin: 0;
+      word-break: break-word;
+    }
+    code, pre {
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 12px;
+    }
+    pre {
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      overflow: auto;
+      background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));
+      border: 1px solid var(--vscode-editorWidget-border, transparent);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    ul {
+      margin: 0;
+      padding-left: 20px;
+    }
+    li + li {
+      margin-top: 6px;
+    }
+    .muted {
+      color: var(--vscode-descriptionForeground);
+    }
+    .pill {
+      display: inline-block;
+      margin-left: 6px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--vscode-badge-background);
+      color: var(--vscode-badge-foreground);
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(sessionIdentityLabel(session))}</h1>
+  <dl class="grid">
+    <dt>Branch</dt>
+    <dd><code>${escapeHtml(session.branch)}</code></dd>
+    <dt>Worktree</dt>
+    <dd><code>${escapeHtml(session.worktreePath)}</code></dd>
+    <dt>Base branch</dt>
+    <dd><code>${escapeHtml(inspectData?.baseBranch || 'dev')}</code></dd>
+    <dt>Divergence</dt>
+    <dd>${escapeHtml(formatInspectBranchSummary(inspectData))}</dd>
+    <dt>Held locks</dt>
+    <dd>${Array.isArray(inspectData?.heldLocks) ? inspectData.heldLocks.length : 0}</dd>
+    <dt>Log file</dt>
+    <dd><code>${escapeHtml(inspectData?.logPath || 'Unavailable')}</code></dd>
+  </dl>
+  <h2>Held Locks</h2>
+  ${heldLocksMarkup}
+  <h2>Agent Log Tail</h2>
+  <pre>${logContent}</pre>
+</body>
+</html>`;
 }
 
 class SessionDecorationProvider {
@@ -1398,9 +1529,86 @@ function countEntryConflicts(entry) {
   return sessionConflicts + changeConflicts;
 }
 
+class SessionInspectPanelManager {
+  constructor() {
+    this.panel = null;
+    this.session = null;
+  }
+
+  open(session) {
+    const targetSession = session?.branch ? { ...session } : null;
+    if (!targetSession?.repoRoot || !targetSession?.branch) {
+      showSessionMessage('Pick an Active Agents session first.');
+      return;
+    }
+    if (!vscode.window.createWebviewPanel) {
+      showSessionMessage('Inspect panel is unavailable in this VS Code build.');
+      return;
+    }
+
+    this.session = targetSession;
+    if (!this.panel) {
+      this.panel = vscode.window.createWebviewPanel(
+        INSPECT_PANEL_VIEW_TYPE,
+        inspectPanelTitle(targetSession),
+        vscode.ViewColumn?.Beside,
+        {
+          enableFindWidget: true,
+          enableScripts: false,
+          retainContextWhenHidden: true,
+        },
+      );
+      this.panel.onDidDispose(() => {
+        this.panel = null;
+        this.session = null;
+      });
+    } else {
+      this.panel.reveal?.(vscode.ViewColumn?.Beside);
+    }
+
+    this.render();
+  }
+
+  resolveSession() {
+    if (!this.session?.repoRoot || !this.session?.branch) {
+      return this.session ? { ...this.session } : null;
+    }
+
+    return readActiveSessions(this.session.repoRoot, { includeStale: true })
+      .find((entry) => sessionSelectionKey(entry) === sessionSelectionKey(this.session))
+      || { ...this.session };
+  }
+
+  render() {
+    if (!this.panel || !this.session) {
+      return;
+    }
+
+    const session = this.resolveSession();
+    if (!session) {
+      return;
+    }
+
+    this.session = { ...session };
+    this.panel.title = inspectPanelTitle(session);
+    this.panel.webview.html = renderInspectPanelHtml(session, readSessionInspectData(session));
+  }
+
+  refresh() {
+    this.render();
+  }
+
+  dispose() {
+    this.panel?.dispose();
+    this.panel = null;
+    this.session = null;
+  }
+}
+
 class ActiveAgentsRefreshController {
-  constructor(provider) {
+  constructor(provider, inspectPanelManager = null) {
     this.provider = provider;
+    this.inspectPanelManager = inspectPanelManager;
     this.refreshTimer = null;
     this.sessionWatchers = new Map();
   }
@@ -1418,6 +1626,7 @@ class ActiveAgentsRefreshController {
   async refreshNow() {
     await this.syncSessionWatchers();
     await this.provider.refresh();
+    this.inspectPanelManager?.refresh();
   }
 
   async syncSessionWatchers() {
@@ -1468,7 +1677,8 @@ class ActiveAgentsRefreshController {
 function activate(context) {
   const decorationProvider = new SessionDecorationProvider();
   const provider = new ActiveAgentsProvider(decorationProvider);
-  const refreshController = new ActiveAgentsRefreshController(provider);
+  const inspectPanelManager = new SessionInspectPanelManager();
+  const refreshController = new ActiveAgentsRefreshController(provider, inspectPanelManager);
   const treeView = vscode.window.createTreeView('gitguardex.activeAgents', {
     treeDataProvider: provider,
     showCollapseAll: true,
@@ -1486,6 +1696,7 @@ function activate(context) {
   const activeSessionsWatcher = vscode.workspace.createFileSystemWatcher(ACTIVE_SESSION_FILES_GLOB);
   const lockWatcher = vscode.workspace.createFileSystemWatcher(AGENT_FILE_LOCKS_GLOB);
   const worktreeLockWatcher = vscode.workspace.createFileSystemWatcher(WORKTREE_AGENT_LOCKS_GLOB);
+  const logWatcher = vscode.workspace.createFileSystemWatcher(AGENT_LOG_FILES_GLOB);
   const updateCommitInput = (session) => {
     sourceControl.inputBox.enabled = true;
     sourceControl.inputBox.visible = true;
@@ -1567,6 +1778,7 @@ function activate(context) {
     treeView,
     sourceControl,
     activeAgentsStatusItem,
+    inspectPanelManager,
     refreshController,
     vscode.window.registerFileDecorationProvider(decorationProvider),
     vscode.commands.registerCommand('gitguardex.activeAgents.startAgent', () => startAgentFromPrompt(refresh)),
@@ -1598,6 +1810,9 @@ function activate(context) {
 
       await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(change.absolutePath));
     }),
+    vscode.commands.registerCommand('gitguardex.activeAgents.inspect', (session) => {
+      inspectPanelManager.open(session || provider.getSelectedSession());
+    }),
     vscode.commands.registerCommand('gitguardex.activeAgents.finishSession', finishSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.syncSession', syncSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.stopSession', (session) => stopSession(session, refresh)),
@@ -1606,6 +1821,7 @@ function activate(context) {
     activeSessionsWatcher,
     lockWatcher,
     worktreeLockWatcher,
+    logWatcher,
     { dispose: () => clearInterval(interval) },
   );
 
@@ -1613,6 +1829,7 @@ function activate(context) {
     ...bindRefreshWatcher(activeSessionsWatcher, scheduleRefresh),
     ...bindRefreshWatcher(lockWatcher, refreshLockRegistry),
     ...bindRefreshWatcher(worktreeLockWatcher, scheduleRefresh),
+    ...bindRefreshWatcher(logWatcher, scheduleRefresh),
   );
   void refreshController.refreshNow();
   void maybeAutoUpdateActiveAgentsExtension(context);

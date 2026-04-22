@@ -37,6 +37,11 @@
         "icon": "$(check)"
       },
       {
+        "command": "gitguardex.activeAgents.inspect",
+        "title": "Inspect Session",
+        "icon": "$(info)"
+      },
+      {
         "command": "gitguardex.activeAgents.openWorktree",
         "title": "Open Agent Worktree"
       },
@@ -92,6 +97,11 @@
       "view/item/context": [
         {
           "command": "gitguardex.activeAgents.openWorktree",
+          "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
+          "group": "inline"
+        },
+        {
+          "command": "gitguardex.activeAgents.inspect",
           "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
           "group": "inline"
         },

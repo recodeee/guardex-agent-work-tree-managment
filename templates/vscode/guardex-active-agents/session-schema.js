@@ -5,6 +5,7 @@ const cp = require('node:child_process');
 const ACTIVE_SESSIONS_RELATIVE_DIR = path.join('.omx', 'state', 'active-sessions');
 const SESSION_SCHEMA_VERSION = 1;
 const LOCK_FILE_RELATIVE = path.join('.omx', 'state', 'agent-file-locks.json');
+const LOGS_RELATIVE_DIR = path.join('.omx', 'logs');
 const AGENT_WORKTREE_LOCK_FILE = 'AGENT.lock';
 const MANAGED_WORKTREE_ROOTS = [
   path.join('.omx', 'agent-worktrees'),
@@ -18,6 +19,8 @@ const MANAGED_WORKTREE_FILTER_PREFIXES = MANAGED_WORKTREE_ROOTS
 const IDLE_ACTIVITY_WINDOW_MS = 2 * 60 * 1000;
 const STALLED_ACTIVITY_WINDOW_MS = 15 * 60 * 1000;
 const HEARTBEAT_STALE_MS = 5 * 60 * 1000;
+const DEFAULT_BASE_BRANCH = 'dev';
+const DEFAULT_LOG_TAIL_LINE_COUNT = 200;
 const ADVISORY_SESSION_STATES = new Set(['working', 'thinking', 'idle']);
 const WORKTREE_ACTIVITY_CACHE_TTL_MS = 3_000;
 const MAX_WORKTREE_ACTIVITY_STAT_PATHS = 200;
@@ -129,6 +132,138 @@ function readJsonFile(filePath) {
   } catch (_error) {
     return null;
   }
+}
+
+function readConfiguredBaseBranch(repoRoot) {
+  const lines = runGitLines(path.resolve(repoRoot), ['config', '--get', 'multiagent.baseBranch']);
+  if (Array.isArray(lines) && typeof lines[0] === 'string' && lines[0].trim()) {
+    return lines[0].trim();
+  }
+  return DEFAULT_BASE_BRANCH;
+}
+
+function readAheadBehindCounts(worktreePath, branch, baseBranch) {
+  const normalizedWorktreePath = toNonEmptyString(worktreePath);
+  const normalizedBranch = toNonEmptyString(branch);
+  const normalizedBaseBranch = toNonEmptyString(baseBranch, DEFAULT_BASE_BRANCH);
+  const compareRef = `origin/${normalizedBaseBranch}`;
+
+  if (!normalizedWorktreePath || !normalizedBranch) {
+    return {
+      compareRef,
+      aheadCount: null,
+      behindCount: null,
+    };
+  }
+
+  const lines = runGitLines(normalizedWorktreePath, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    `${normalizedBranch}...${compareRef}`,
+  ]);
+  const match = Array.isArray(lines) && typeof lines[0] === 'string'
+    ? lines[0].trim().match(/^(\d+)\s+(\d+)$/)
+    : null;
+  if (!match) {
+    return {
+      compareRef,
+      aheadCount: null,
+      behindCount: null,
+    };
+  }
+
+  return {
+    compareRef,
+    aheadCount: Number.parseInt(match[1], 10),
+    behindCount: Number.parseInt(match[2], 10),
+  };
+}
+
+function sessionLogPath(repoRoot, branch) {
+  const normalizedRepoRoot = toNonEmptyString(repoRoot);
+  const normalizedBranch = toNonEmptyString(branch);
+  if (!normalizedRepoRoot || !normalizedBranch) {
+    return '';
+  }
+
+  return path.join(
+    path.resolve(normalizedRepoRoot),
+    LOGS_RELATIVE_DIR,
+    `agent-${sanitizeBranchForFile(normalizedBranch)}.log`,
+  );
+}
+
+function readLogTail(filePath, maxLines = DEFAULT_LOG_TAIL_LINE_COUNT) {
+  const normalizedFilePath = toNonEmptyString(filePath);
+  const normalizedMaxLines = toPositiveInteger(maxLines) || DEFAULT_LOG_TAIL_LINE_COUNT;
+  if (!normalizedFilePath || !fs.existsSync(normalizedFilePath)) {
+    return [];
+  }
+
+  try {
+    const lines = fs.readFileSync(normalizedFilePath, 'utf8').split(/\r?\n/);
+    while (lines.length > 0 && lines[lines.length - 1] === '') {
+      lines.pop();
+    }
+    return lines.slice(-normalizedMaxLines);
+  } catch (_error) {
+    return [];
+  }
+}
+
+function readSessionHeldLocks(repoRoot, branch) {
+  const normalizedRepoRoot = toNonEmptyString(repoRoot);
+  const normalizedBranch = toNonEmptyString(branch);
+  if (!normalizedRepoRoot || !normalizedBranch) {
+    return [];
+  }
+
+  const parsed = readJsonFile(path.join(path.resolve(normalizedRepoRoot), LOCK_FILE_RELATIVE));
+  const locks = parsed?.locks;
+  if (!locks || typeof locks !== 'object' || Array.isArray(locks)) {
+    return [];
+  }
+
+  return Object.entries(locks)
+    .map(([rawRelativePath, entry]) => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const relativePath = normalizeRelativePath(rawRelativePath);
+      const ownerBranch = toNonEmptyString(entry.branch);
+      if (!relativePath || ownerBranch !== normalizedBranch) {
+        return null;
+      }
+
+      return {
+        relativePath,
+        claimedAt: toNonEmptyString(entry.claimed_at),
+        allowDelete: Boolean(entry.allow_delete),
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+function readSessionInspectData(session, options = {}) {
+  const repoRoot = toNonEmptyString(session?.repoRoot);
+  const branch = toNonEmptyString(session?.branch);
+  const worktreePath = toNonEmptyString(session?.worktreePath);
+  const baseBranch = readConfiguredBaseBranch(repoRoot);
+  const logPath = sessionLogPath(repoRoot, branch);
+  const logTailLines = readLogTail(logPath, options.logLines);
+
+  return {
+    baseBranch,
+    logPath,
+    logExists: Boolean(logPath) && fs.existsSync(logPath),
+    logTailLines,
+    logTailText: logTailLines.join('\n'),
+    heldLocks: readSessionHeldLocks(repoRoot, branch),
+    ...readAheadBehindCounts(worktreePath, branch, baseBranch),
+  };
 }
 
 function normalizeIsoString(value, fallback = '') {
@@ -964,7 +1099,13 @@ module.exports = {
   readWorktreeLockSessions,
   readRepoChanges,
   deriveRepoChangeStatus,
+  readAheadBehindCounts,
+  readConfiguredBaseBranch,
+  readLogTail,
   resolveWorktreeGitDir,
+  readSessionHeldLocks,
+  readSessionInspectData,
+  sessionLogPath,
   sanitizeBranchForFile,
   sessionFileNameForBranch,
   sessionFilePathForBranch,
