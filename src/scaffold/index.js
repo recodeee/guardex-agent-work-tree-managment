@@ -3,10 +3,28 @@ const {
   path,
   TOOL_NAME,
   SHORT_TOOL_NAME,
+  GUARDEX_HOME_DIR,
+  AGENT_WORKTREE_RELATIVE_DIRS,
+  TEMPLATE_ROOT,
+  HOOK_NAMES,
+  LOCK_FILE_RELATIVE,
+  LEGACY_MANAGED_PACKAGE_SCRIPTS,
+  USER_LEVEL_SKILL_ASSETS,
+  AGENTS_MARKER_START,
+  AGENTS_MARKER_END,
+  GITIGNORE_MARKER_START,
+  GITIGNORE_MARKER_END,
+  SHARED_VSCODE_SETTINGS_RELATIVE,
+  REPO_SCAN_IGNORED_FOLDERS_SETTING,
+  MANAGED_REPO_SCAN_IGNORED_FOLDERS,
+  REPO_SCAFFOLD_DIRECTORIES,
+  OMX_SCAFFOLD_DIRECTORIES,
+  OMX_SCAFFOLD_FILES,
   toDestinationPath,
   EXECUTABLE_RELATIVE_PATHS,
   CRITICAL_GUARDRAIL_PATHS,
 } = require('../context');
+const { run } = require('../core/runtime');
 
 function ensureParentDir(repoRoot, filePath, dryRun) {
   if (dryRun) return;
@@ -108,6 +126,644 @@ function managedForceConflictMessage(relativePath) {
   );
 }
 
+function renderManagedFile(repoRoot, relativePath, content, options = {}) {
+  const destinationPath = path.join(repoRoot, relativePath);
+  const destinationExists = fs.existsSync(destinationPath);
+  const force = Boolean(options.force);
+  const dryRun = Boolean(options.dryRun);
+
+  if (destinationExists) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === content) {
+      ensureExecutable(destinationPath, relativePath, dryRun);
+      return { status: 'unchanged', file: relativePath };
+    }
+    if (!force && !isCriticalGuardrailPath(relativePath)) {
+      throw new Error(managedForceConflictMessage(relativePath));
+    }
+  }
+
+  ensureParentDir(repoRoot, destinationPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(destinationPath, content, 'utf8');
+    ensureExecutable(destinationPath, relativePath, dryRun);
+  }
+
+  if (destinationExists && !force && isCriticalGuardrailPath(relativePath)) {
+    return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: relativePath };
+  }
+
+  return { status: destinationExists ? 'overwritten' : 'created', file: relativePath };
+}
+
+function ensureGeneratedScriptShim(repoRoot, spec, options = {}) {
+  const content = spec.kind === 'python'
+    ? renderPythonDispatchShim(spec.command)
+    : renderShellDispatchShim(spec.command);
+  return renderManagedFile(repoRoot, spec.relativePath, content, options);
+}
+
+function ensureHookShim(repoRoot, hookName, options = {}) {
+  return renderManagedFile(
+    repoRoot,
+    path.posix.join('.githooks', hookName),
+    renderShellDispatchShim(['hook', 'run', hookName]),
+    options,
+  );
+}
+
+function copyTemplateFile(repoRoot, relativeTemplatePath, force, dryRun) {
+  const sourcePath = path.join(TEMPLATE_ROOT, relativeTemplatePath);
+  const destinationRelativePath = toDestinationPath(relativeTemplatePath);
+  const destinationPath = path.join(repoRoot, destinationRelativePath);
+
+  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+  const destinationExists = fs.existsSync(destinationPath);
+
+  if (destinationExists) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === sourceContent) {
+      ensureExecutable(destinationPath, destinationRelativePath, dryRun);
+      return { status: 'unchanged', file: destinationRelativePath };
+    }
+    if (!force && !isCriticalGuardrailPath(destinationRelativePath)) {
+      throw new Error(managedForceConflictMessage(destinationRelativePath));
+    }
+  }
+
+  ensureParentDir(repoRoot, destinationPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
+    ensureExecutable(destinationPath, destinationRelativePath, dryRun);
+  }
+
+  if (destinationExists && !force && isCriticalGuardrailPath(destinationRelativePath)) {
+    return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: destinationRelativePath };
+  }
+
+  return { status: destinationExists ? 'overwritten' : 'created', file: destinationRelativePath };
+}
+
+function ensureTemplateFilePresent(repoRoot, relativeTemplatePath, dryRun) {
+  const sourcePath = path.join(TEMPLATE_ROOT, relativeTemplatePath);
+  const destinationRelativePath = toDestinationPath(relativeTemplatePath);
+  const destinationPath = path.join(repoRoot, destinationRelativePath);
+  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+
+  if (fs.existsSync(destinationPath)) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === sourceContent) {
+      ensureExecutable(destinationPath, destinationRelativePath, dryRun);
+      return { status: 'unchanged', file: destinationRelativePath };
+    }
+
+    if (isCriticalGuardrailPath(destinationRelativePath)) {
+      if (!dryRun) {
+        fs.writeFileSync(destinationPath, sourceContent, 'utf8');
+        ensureExecutable(destinationPath, destinationRelativePath, dryRun);
+      }
+      return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: destinationRelativePath };
+    }
+
+    return { status: 'skipped-conflict', file: destinationRelativePath };
+  }
+
+  ensureParentDir(repoRoot, destinationPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
+    ensureExecutable(destinationPath, destinationRelativePath, dryRun);
+  }
+
+  return { status: 'created', file: destinationRelativePath };
+}
+
+function lockFilePath(repoRoot) {
+  return path.join(repoRoot, LOCK_FILE_RELATIVE);
+}
+
+function ensureOmxScaffold(repoRoot, dryRun) {
+  const operations = [];
+
+  for (const relativeDir of REPO_SCAFFOLD_DIRECTORIES) {
+    const absoluteDir = path.join(repoRoot, relativeDir);
+    if (fs.existsSync(absoluteDir)) {
+      if (!fs.statSync(absoluteDir).isDirectory()) {
+        throw new Error(`Expected directory at ${relativeDir} but found a file.`);
+      }
+      operations.push({ status: 'unchanged', file: relativeDir });
+      continue;
+    }
+
+    if (!dryRun) {
+      fs.mkdirSync(absoluteDir, { recursive: true });
+    }
+    operations.push({ status: 'created', file: relativeDir });
+  }
+
+  for (const relativeDir of OMX_SCAFFOLD_DIRECTORIES) {
+    const absoluteDir = path.join(repoRoot, relativeDir);
+    if (fs.existsSync(absoluteDir)) {
+      if (!fs.statSync(absoluteDir).isDirectory()) {
+        throw new Error(`Expected directory at ${relativeDir} but found a file.`);
+      }
+      operations.push({ status: 'unchanged', file: relativeDir });
+      continue;
+    }
+
+    if (!dryRun) {
+      fs.mkdirSync(absoluteDir, { recursive: true });
+    }
+    operations.push({ status: 'created', file: relativeDir });
+  }
+
+  for (const [relativeFile, defaultContent] of OMX_SCAFFOLD_FILES.entries()) {
+    const absoluteFile = path.join(repoRoot, relativeFile);
+    if (fs.existsSync(absoluteFile)) {
+      if (!fs.statSync(absoluteFile).isFile()) {
+        throw new Error(`Expected file at ${relativeFile} but found a directory.`);
+      }
+      operations.push({ status: 'unchanged', file: relativeFile });
+      continue;
+    }
+
+    if (!dryRun) {
+      fs.mkdirSync(path.dirname(absoluteFile), { recursive: true });
+      fs.writeFileSync(absoluteFile, defaultContent, 'utf8');
+    }
+    operations.push({ status: 'created', file: relativeFile });
+  }
+
+  return operations;
+}
+
+function ensureLockRegistry(repoRoot, dryRun) {
+  const absolutePath = lockFilePath(repoRoot);
+  if (fs.existsSync(absolutePath)) {
+    return { status: 'unchanged', file: LOCK_FILE_RELATIVE };
+  }
+
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+    fs.writeFileSync(absolutePath, JSON.stringify({ locks: {} }, null, 2) + '\n', 'utf8');
+  }
+
+  return { status: 'created', file: LOCK_FILE_RELATIVE };
+}
+
+function lockStateOrError(repoRoot) {
+  const lockPath = lockFilePath(repoRoot);
+  if (!fs.existsSync(lockPath)) {
+    return { ok: false, error: `${LOCK_FILE_RELATIVE} is missing` };
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+    if (!parsed || typeof parsed !== 'object' || typeof parsed.locks !== 'object' || parsed.locks === null) {
+      return { ok: false, error: `${LOCK_FILE_RELATIVE} has invalid schema (expected { locks: {} })` };
+    }
+
+    for (const [filePath, entry] of Object.entries(parsed.locks)) {
+      if (!entry || typeof entry !== 'object') {
+        parsed.locks[filePath] = { branch: '', claimed_at: '', allow_delete: false };
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(entry, 'allow_delete')) {
+        entry.allow_delete = false;
+      }
+    }
+
+    return { ok: true, raw: parsed, locks: parsed.locks };
+  } catch (error) {
+    return { ok: false, error: `${LOCK_FILE_RELATIVE} is invalid JSON: ${error.message}` };
+  }
+}
+
+function writeLockState(repoRoot, payload, dryRun) {
+  if (dryRun) return;
+  const lockPath = lockFilePath(repoRoot);
+  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+  fs.writeFileSync(lockPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
+}
+
+function removeLegacyPackageScripts(repoRoot, dryRun) {
+  const packagePath = path.join(repoRoot, 'package.json');
+  if (!fs.existsSync(packagePath)) {
+    return { status: 'skipped', file: 'package.json', note: 'package.json not found' };
+  }
+
+  let pkg;
+  try {
+    pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+  } catch (error) {
+    throw new Error(`Unable to parse package.json in target repo: ${error.message}`);
+  }
+
+  const existingScripts = pkg.scripts && typeof pkg.scripts === 'object'
+    ? pkg.scripts
+    : {};
+  pkg.scripts = existingScripts;
+  let changed = false;
+  for (const [key, value] of Object.entries(LEGACY_MANAGED_PACKAGE_SCRIPTS)) {
+    if (existingScripts[key] === value) {
+      delete existingScripts[key];
+      changed = true;
+    }
+  }
+
+  if (!changed) {
+    return { status: 'unchanged', file: 'package.json', note: 'no Guardex-managed agent:* scripts found' };
+  }
+
+  if (!dryRun) {
+    fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  }
+
+  return { status: dryRun ? 'would-update' : 'updated', file: 'package.json', note: 'removed Guardex-managed agent:* scripts' };
+}
+
+function installUserLevelAsset(asset, options = {}) {
+  const dryRun = Boolean(options.dryRun);
+  const force = Boolean(options.force);
+  const destinationPath = path.join(GUARDEX_HOME_DIR, asset.destination);
+  const sourceContent = fs.readFileSync(asset.source, 'utf8');
+  const destinationExists = fs.existsSync(destinationPath);
+
+  if (destinationExists) {
+    const existingContent = fs.readFileSync(destinationPath, 'utf8');
+    if (existingContent === sourceContent) {
+      return { status: 'unchanged', file: asset.destination };
+    }
+    if (!force) {
+      return { status: 'skipped-conflict', file: asset.destination };
+    }
+  }
+
+  if (!dryRun) {
+    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
+  }
+  return { status: destinationExists ? (dryRun ? 'would-update' : 'updated') : 'created', file: asset.destination };
+}
+
+function removeLegacyManagedRepoFile(repoRoot, relativePath, options = {}) {
+  const dryRun = Boolean(options.dryRun);
+  const force = Boolean(options.force);
+  const absolutePath = path.join(repoRoot, relativePath);
+  if (!fs.existsSync(absolutePath)) {
+    return { status: 'unchanged', file: relativePath, note: 'not present' };
+  }
+  if (!fs.statSync(absolutePath).isFile()) {
+    return { status: 'skipped-conflict', file: relativePath, note: 'not a regular file' };
+  }
+
+  const skillAsset = USER_LEVEL_SKILL_ASSETS.find((asset) => asset.destination === relativePath);
+  if (skillAsset) {
+    const userLevelPath = path.join(GUARDEX_HOME_DIR, skillAsset.destination);
+    if (!fs.existsSync(userLevelPath)) {
+      return { status: 'skipped', file: relativePath, note: 'user-level replacement not installed' };
+    }
+  }
+
+  const templateRelative = skillAsset
+    ? skillAsset.source.slice(TEMPLATE_ROOT.length + 1)
+    : relativePath.replace(/^\./, '');
+  const sourcePath = path.join(TEMPLATE_ROOT, templateRelative);
+  if (!fs.existsSync(sourcePath)) {
+    return { status: 'skipped', file: relativePath, note: 'template source missing' };
+  }
+
+  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
+  const existingContent = fs.readFileSync(absolutePath, 'utf8');
+  if (existingContent !== sourceContent && !force) {
+    return { status: 'skipped-conflict', file: relativePath, note: 'local edits differ from managed template' };
+  }
+
+  if (!dryRun) {
+    fs.rmSync(absolutePath, { force: true });
+  }
+  return { status: dryRun ? 'would-remove' : 'removed', file: relativePath };
+}
+
+function ensureAgentsSnippet(repoRoot, dryRun) {
+  const agentsPath = path.join(repoRoot, 'AGENTS.md');
+  const snippet = fs.readFileSync(path.join(TEMPLATE_ROOT, 'AGENTS.multiagent-safety.md'), 'utf8').trimEnd();
+  const managedRegex = new RegExp(
+    `${AGENTS_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AGENTS_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    'm',
+  );
+
+  if (!fs.existsSync(agentsPath)) {
+    if (!dryRun) {
+      fs.writeFileSync(agentsPath, `# AGENTS\n\n${snippet}\n`, 'utf8');
+    }
+    return { status: 'created', file: 'AGENTS.md' };
+  }
+
+  const existing = fs.readFileSync(agentsPath, 'utf8');
+  if (managedRegex.test(existing)) {
+    const next = existing.replace(managedRegex, snippet);
+    if (next === existing) {
+      return { status: 'unchanged', file: 'AGENTS.md' };
+    }
+    if (!dryRun) {
+      fs.writeFileSync(agentsPath, next, 'utf8');
+    }
+    return { status: 'updated', file: 'AGENTS.md', note: 'refreshed gitguardex-managed block' };
+  }
+
+  if (existing.includes(AGENTS_MARKER_START)) {
+    return { status: 'unchanged', file: 'AGENTS.md', note: 'existing marker found without managed end marker' };
+  }
+
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  if (!dryRun) {
+    fs.writeFileSync(agentsPath, `${existing}${separator}${snippet}\n`, 'utf8');
+  }
+
+  return { status: 'updated', file: 'AGENTS.md' };
+}
+
+function ensureManagedGitignore(repoRoot, dryRun) {
+  const gitignorePath = path.join(repoRoot, '.gitignore');
+  const managedBlock = [
+    GITIGNORE_MARKER_START,
+    ...require('../context').MANAGED_GITIGNORE_PATHS,
+    GITIGNORE_MARKER_END,
+  ].join('\n');
+  const managedRegex = new RegExp(
+    `${GITIGNORE_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${GITIGNORE_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    'm',
+  );
+
+  if (!fs.existsSync(gitignorePath)) {
+    if (!dryRun) {
+      fs.writeFileSync(gitignorePath, `${managedBlock}\n`, 'utf8');
+    }
+    return { status: 'created', file: '.gitignore', note: 'added gitguardex-managed entries' };
+  }
+
+  const existing = fs.readFileSync(gitignorePath, 'utf8');
+  if (managedRegex.test(existing)) {
+    const next = existing.replace(managedRegex, managedBlock);
+    if (next === existing) {
+      return { status: 'unchanged', file: '.gitignore' };
+    }
+    if (!dryRun) {
+      fs.writeFileSync(gitignorePath, next, 'utf8');
+    }
+    return { status: 'updated', file: '.gitignore', note: 'refreshed gitguardex-managed entries' };
+  }
+
+  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+  if (!dryRun) {
+    fs.writeFileSync(gitignorePath, `${existing}${separator}${managedBlock}\n`, 'utf8');
+  }
+  return { status: 'updated', file: '.gitignore', note: 'appended gitguardex-managed entries' };
+}
+
+function stripJsonComments(source) {
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index];
+    const next = source[index + 1];
+
+    if (inLineComment) {
+      if (current === '\n' || current === '\r') {
+        inLineComment = false;
+        result += current;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (current === '*' && next === '/') {
+        inBlockComment = false;
+        index += 1;
+        continue;
+      }
+      if (current === '\n' || current === '\r') {
+        result += current;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += current;
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (current === '\\') {
+        escapeNext = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      result += current;
+      continue;
+    }
+
+    if (current === '/' && next === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    result += current;
+  }
+
+  return result;
+}
+
+function stripJsonTrailingCommas(source) {
+  let result = '';
+  let inString = false;
+  let escapeNext = false;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const current = source[index];
+
+    if (inString) {
+      result += current;
+      if (escapeNext) {
+        escapeNext = false;
+      } else if (current === '\\') {
+        escapeNext = true;
+      } else if (current === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      inString = true;
+      result += current;
+      continue;
+    }
+
+    if (current === ',') {
+      let lookahead = index + 1;
+      while (lookahead < source.length && /\s/.test(source[lookahead])) {
+        lookahead += 1;
+      }
+      if (source[lookahead] === '}' || source[lookahead] === ']') {
+        continue;
+      }
+    }
+
+    result += current;
+  }
+
+  return result;
+}
+
+function parseJsonObjectLikeFile(source, relativePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonTrailingCommas(stripJsonComments(source)));
+  } catch (error) {
+    throw new Error(`Unable to parse ${relativePath} as JSON or JSONC: ${error.message}`);
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${relativePath} must contain a top-level object.`);
+  }
+
+  return parsed;
+}
+
+function uniqueStringList(values) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    if (typeof value !== 'string' || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+
+  return result;
+}
+
+function buildRepoVscodeSettings(existingSettings = {}) {
+  const nextSettings = { ...existingSettings };
+  const existingIgnoredFolders = Array.isArray(existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING])
+    ? existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING]
+    : [];
+
+  nextSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING] = uniqueStringList([
+    ...existingIgnoredFolders,
+    ...MANAGED_REPO_SCAN_IGNORED_FOLDERS,
+  ]);
+
+  return nextSettings;
+}
+
+function ensureRepoVscodeSettings(repoRoot, dryRun) {
+  const settingsPath = path.join(repoRoot, SHARED_VSCODE_SETTINGS_RELATIVE);
+  const destinationExists = fs.existsSync(settingsPath);
+  const existingContent = destinationExists ? fs.readFileSync(settingsPath, 'utf8') : '';
+  const existingSettings = destinationExists
+    ? parseJsonObjectLikeFile(existingContent, SHARED_VSCODE_SETTINGS_RELATIVE)
+    : {};
+  const nextContent = `${JSON.stringify(buildRepoVscodeSettings(existingSettings), null, 2)}\n`;
+
+  if (destinationExists && existingContent === nextContent) {
+    return { status: 'unchanged', file: SHARED_VSCODE_SETTINGS_RELATIVE };
+  }
+
+  ensureParentDir(repoRoot, settingsPath, dryRun);
+  if (!dryRun) {
+    fs.writeFileSync(settingsPath, nextContent, 'utf8');
+  }
+
+  return {
+    status: destinationExists ? 'updated' : 'created',
+    file: SHARED_VSCODE_SETTINGS_RELATIVE,
+    note: 'shared VS Code repo scan ignores for Guardex worktrees',
+  };
+}
+
+function normalizeWorkspacePath(relativePath) {
+  return String(relativePath || '.').replace(/\\/g, '/');
+}
+
+function buildParentWorkspaceView(repoRoot) {
+  const parentDir = path.dirname(repoRoot);
+  const workspaceFileName = `${path.basename(repoRoot)}-branches.code-workspace`;
+  const workspacePath = path.join(parentDir, workspaceFileName);
+  const repoRelativePath = normalizeWorkspacePath(path.relative(parentDir, repoRoot) || '.');
+
+  return {
+    workspacePath,
+    payload: {
+      folders: [
+        { path: repoRelativePath },
+        ...AGENT_WORKTREE_RELATIVE_DIRS.map((relativeDir) => ({
+          path: normalizeWorkspacePath(
+            path.join(repoRelativePath === '.' ? '' : repoRelativePath, relativeDir),
+          ),
+        })),
+      ],
+      settings: {
+        'scm.alwaysShowRepositories': true,
+      },
+    },
+  };
+}
+
+function ensureParentWorkspaceView(repoRoot, dryRun) {
+  const { workspacePath, payload } = buildParentWorkspaceView(repoRoot);
+  const operationFile = path.relative(repoRoot, workspacePath) || path.basename(workspacePath);
+  const nextContent = `${JSON.stringify(payload, null, 2)}\n`;
+  const note = 'parent VS Code workspace view';
+
+  if (!fs.existsSync(workspacePath)) {
+    if (!dryRun) {
+      fs.writeFileSync(workspacePath, nextContent, 'utf8');
+    }
+    return { status: dryRun ? 'would-create' : 'created', file: operationFile, note };
+  }
+
+  const currentContent = fs.readFileSync(workspacePath, 'utf8');
+  if (currentContent === nextContent) {
+    return { status: 'unchanged', file: operationFile, note };
+  }
+
+  if (!dryRun) {
+    fs.writeFileSync(workspacePath, nextContent, 'utf8');
+  }
+  return { status: dryRun ? 'would-update' : 'updated', file: operationFile, note };
+}
+
+function configureHooks(repoRoot, dryRun) {
+  if (dryRun) {
+    return { status: 'would-set', key: 'core.hooksPath', value: '.githooks' };
+  }
+
+  const result = run('git', ['-C', repoRoot, 'config', 'core.hooksPath', '.githooks']);
+  if (result.status !== 0) {
+    throw new Error(`Failed to set git hooksPath: ${(result.stderr || '').trim()}`);
+  }
+
+  return { status: 'set', key: 'core.hooksPath', value: '.githooks' };
+}
+
 function printOperations(title, payload, dryRun = false) {
   console.log(`[${TOOL_NAME}] ${title}: ${payload.repoRoot}`);
   for (const operation of payload.operations) {
@@ -135,6 +791,8 @@ function printStandaloneOperations(title, rootLabel, operations, dryRun = false)
 }
 
 module.exports = {
+  HOOK_NAMES,
+  LOCK_FILE_RELATIVE,
   toDestinationPath,
   ensureParentDir,
   ensureExecutable,
@@ -143,6 +801,28 @@ module.exports = {
   renderShellDispatchShim,
   renderPythonDispatchShim,
   managedForceConflictMessage,
+  renderManagedFile,
+  ensureGeneratedScriptShim,
+  ensureHookShim,
+  copyTemplateFile,
+  ensureTemplateFilePresent,
+  ensureOmxScaffold,
+  ensureLockRegistry,
+  lockStateOrError,
+  writeLockState,
+  removeLegacyPackageScripts,
+  installUserLevelAsset,
+  removeLegacyManagedRepoFile,
+  ensureAgentsSnippet,
+  ensureManagedGitignore,
+  stripJsonComments,
+  stripJsonTrailingCommas,
+  parseJsonObjectLikeFile,
+  buildRepoVscodeSettings,
+  ensureRepoVscodeSettings,
+  buildParentWorkspaceView,
+  ensureParentWorkspaceView,
+  configureHooks,
   printOperations,
   printStandaloneOperations,
 };

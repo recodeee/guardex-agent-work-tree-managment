@@ -172,11 +172,12 @@ test('cli main delegates extracted seams and keeps doctor single-source', () => 
   assert.equal(doctorDefs.length, 1, 'doctor() must not be duplicated');
   assert.doesNotMatch(cliSource, /function parseSetupArgs\(/);
   assert.doesNotMatch(cliSource, /function parseDoctorArgs\(/);
-  assert.match(cliSource, /function assertProtectedMainWriteAllowed\(options, commandName\)\s*{\s*return getSandboxApi\(\)\.assertProtectedMainWriteAllowed\(options, commandName\);\s*}/s);
-  assert.match(cliSource, /function maybeSelfUpdateBeforeStatus\(\)\s*{\s*return getToolchainApi\(\)\.maybeSelfUpdateBeforeStatus\(\);\s*}/s);
+  assert.doesNotMatch(cliSource, /getSandboxApi|getToolchainApi|getFinishApi/);
+  assert.match(cliSource, /function assertProtectedMainWriteAllowed\(options, commandName\)\s*{\s*return sandboxModule\.assertProtectedMainWriteAllowed\(options, commandName\);\s*}/s);
+  assert.match(cliSource, /function maybeSelfUpdateBeforeStatus\(\)\s*{\s*return toolchainModule\.maybeSelfUpdateBeforeStatus\(\);\s*}/s);
   assert.match(cliSource, /function hook\(rawArgs\)\s*{\s*return hooksModule\.hook\(rawArgs, \{/s);
   assert.match(cliSource, /function internal\(rawArgs\)\s*{\s*return hooksModule\.internal\(rawArgs, \{/s);
-  assert.match(cliSource, /function finish\(rawArgs, defaults = \{\}\)\s*{\s*return getFinishApi\(\)\.finish\(rawArgs, defaults\);\s*}/s);
+  assert.match(cliSource, /function finish\(rawArgs, defaults = \{\}\)\s*{\s*return finishCommands\.finish\(rawArgs, defaults\);\s*}/s);
   assert.match(cliSource, /printOperations\('Doctor\/fix', fixPayload, (?:singleRepoOptions|options)\.dryRun\);/);
 });
 
@@ -193,6 +194,6 @@ test('cli main module loads after extracted arg and dispatch seams move out', ()
 });
 
 test('worktree-change detection uses normal untracked-file mode', () => {
-  const cliSource = fs.readFileSync(path.join(repoRoot, 'src', 'cli', 'main.js'), 'utf8');
-  assert.match(cliSource, /'status',\s*'--porcelain',\s*'--untracked-files=normal',\s*'--'/s);
+  const gitSource = fs.readFileSync(path.join(repoRoot, 'src', 'git', 'index.js'), 'utf8');
+  assert.match(gitSource, /'status',\s*'--porcelain',\s*'--untracked-files=normal',\s*'--'/s);
 });

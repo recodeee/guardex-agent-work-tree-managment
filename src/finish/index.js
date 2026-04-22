@@ -1,425 +1,523 @@
-function createFinishApi(deps) {
-  const {
-    TOOL_NAME,
-    LOCK_FILE_RELATIVE,
-    path,
-    fs,
-    run,
-    runPackageAsset,
-    resolveRepoRoot,
-    parseCleanupArgs,
-    parseMergeArgs,
-    parseFinishArgs,
-    parseSyncArgs,
-    listAgentWorktrees,
-    listLocalAgentBranchesForFinish,
-    uniquePreserveOrder,
-    branchExists,
-    resolveFinishBaseBranch,
-    worktreeHasLocalChanges,
-    branchMergedIntoBase,
-    autoCommitWorktreeForFinish,
-    resolveBaseBranch,
-    resolveSyncStrategy,
-    ensureOriginBaseRef,
-    gitRun,
-    currentBranchName,
-    workingTreeIsDirty,
-    aheadBehind,
-    lockRegistryStatus,
-    syncOperation,
-  } = deps;
+const { TOOL_NAME, LOCK_FILE_RELATIVE, path, fs } = require('../context');
+const { run, runPackageAsset } = require('../core/runtime');
+const {
+  resolveRepoRoot,
+  uniquePreserveOrder,
+  listAgentWorktrees,
+  listLocalAgentBranchesForFinish,
+  branchExists,
+  resolveFinishBaseBranch,
+  worktreeHasLocalChanges,
+  branchMergedIntoBase,
+  resolveBaseBranch,
+  resolveSyncStrategy,
+  ensureOriginBaseRef,
+  gitRun,
+  currentBranchName,
+  workingTreeIsDirty,
+  aheadBehind,
+  lockRegistryStatus,
+  syncOperation,
+  gitOutputLines,
+} = require('../git');
+const {
+  parseCleanupArgs,
+  parseMergeArgs,
+  parseFinishArgs,
+  parseSyncArgs,
+} = require('../cli/args');
 
-  function cleanup(rawArgs) {
-    const options = parseCleanupArgs(rawArgs);
-    const repoRoot = resolveRepoRoot(options.target);
+function claimLocksForAutoCommit(repoRoot, worktreePath, branch) {
+  const changedFiles = uniquePreserveOrder([
+    ...gitOutputLines(worktreePath, ['diff', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
+    ...gitOutputLines(worktreePath, ['diff', '--cached', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
+    ...gitOutputLines(worktreePath, ['ls-files', '--others', '--exclude-standard']),
+  ]);
 
-    const args = [];
-    if (options.base) {
-      args.push('--base', options.base);
-    }
-    if (options.branch) {
-      args.push('--branch', options.branch);
-    }
-    if (options.forceDirty) {
-      args.push('--force-dirty');
-    }
-    if (options.dryRun) {
-      args.push('--dry-run');
-    }
-    if (!options.keepCleanWorktrees) {
-      args.push('--only-dirty-worktrees');
-    }
-    if (options.includePrMerged) {
-      args.push('--include-pr-merged');
-    }
-    if (options.idleMinutes > 0) {
-      args.push('--idle-minutes', String(options.idleMinutes));
-    }
-    if (options.maxBranches > 0) {
-      args.push('--max-branches', String(options.maxBranches));
-    }
-    args.push('--delete-branches');
-    if (!options.keepRemote) {
-      args.push('--delete-remote-branches');
-    }
-
-    const runCleanupCycle = () => {
-      const runResult = runPackageAsset('worktreePrune', args, { cwd: repoRoot, stdio: 'inherit' });
-      if (runResult.status !== 0) {
-        throw new Error('Cleanup command failed');
-      }
-    };
-
-    if (options.watch) {
-      let cycle = 0;
-      while (true) {
-        cycle += 1;
-        console.log(
-          `[${TOOL_NAME}] Cleanup watch cycle=${cycle} (interval=${options.intervalSeconds}s, idleMinutes=${options.idleMinutes}, maxBranches=${options.maxBranches > 0 ? options.maxBranches : 'unbounded'}).`,
-        );
-        runCleanupCycle();
-        if (options.once) {
-          break;
-        }
-        const sleepResult = run('sleep', [String(options.intervalSeconds)], { cwd: repoRoot });
-        if (sleepResult.status !== 0) {
-          throw new Error(`Cleanup watch sleep failed (interval=${options.intervalSeconds}s)`);
-        }
-      }
-      process.exitCode = 0;
-      return;
-    }
-
-    runCleanupCycle();
-    process.exitCode = 0;
-  }
-
-  function merge(rawArgs) {
-    const options = parseMergeArgs(rawArgs);
-    const repoRoot = resolveRepoRoot(options.target);
-
-    const args = [];
-    if (options.base) {
-      args.push('--base', options.base);
-    }
-    if (options.into) {
-      args.push('--into', options.into);
-    }
-    if (options.task) {
-      args.push('--task', options.task);
-    }
-    if (options.agent) {
-      args.push('--agent', options.agent);
-    }
-    for (const branch of options.branches) {
-      args.push('--branch', branch);
-    }
-
-    const mergeResult = runPackageAsset('branchMerge', args, { cwd: repoRoot, stdio: 'pipe' });
-    if (mergeResult.stdout) {
-      process.stdout.write(mergeResult.stdout);
-    }
-    if (mergeResult.stderr) {
-      process.stderr.write(mergeResult.stderr);
-    }
-    if (mergeResult.status !== 0) {
-      throw new Error(`merge command failed with status ${mergeResult.status}`);
-    }
-
-    process.exitCode = 0;
-  }
-
-  function finish(rawArgs, defaults = {}) {
-    const options = parseFinishArgs(rawArgs, defaults);
-    const repoRoot = resolveRepoRoot(options.target);
-
-    const worktreeEntries = listAgentWorktrees(repoRoot);
-    const worktreeByBranch = new Map(worktreeEntries.map((entry) => [entry.branch, entry.worktreePath]));
-
-    let candidateBranches = [];
-    if (options.branch) {
-      if (!branchExists(repoRoot, options.branch)) {
-        throw new Error(`Local branch not found: ${options.branch}`);
-      }
-      candidateBranches = [options.branch];
-    } else {
-      candidateBranches = uniquePreserveOrder([
-        ...listLocalAgentBranchesForFinish(repoRoot),
-        ...worktreeEntries.map((entry) => entry.branch),
-      ]);
-    }
-
-    const candidates = [];
-    for (const branch of candidateBranches) {
-      const worktreePath = worktreeByBranch.get(branch) || '';
-      const baseBranch = resolveFinishBaseBranch(repoRoot, branch, options.base);
-      const hasChanges = worktreePath ? worktreeHasLocalChanges(worktreePath) : false;
-      const alreadyMerged = branchMergedIntoBase(repoRoot, branch, baseBranch);
-      if (options.all || options.branch || hasChanges || !alreadyMerged) {
-        candidates.push({
-          branch,
-          baseBranch,
-          worktreePath,
-          hasChanges,
-          alreadyMerged,
-        });
-      }
-    }
-
-    if (candidates.length === 0) {
-      console.log(`[${TOOL_NAME}] No pending agent branches to finish.`);
-      process.exitCode = 0;
-      return;
-    }
-
-    let succeeded = 0;
-    let failed = 0;
-    let autoCommitted = 0;
-
-    for (const candidate of candidates) {
-      const { branch, baseBranch, worktreePath } = candidate;
-      console.log(
-        `[${TOOL_NAME}] Finishing '${branch}' -> '${baseBranch}'${worktreePath ? ` (${worktreePath})` : ''}...`,
+  if (changedFiles.length > 0) {
+    const claim = runPackageAsset('lockTool', ['claim', '--branch', branch, ...changedFiles], {
+      cwd: repoRoot,
+      stdio: 'pipe',
+    });
+    if (claim.status !== 0) {
+      throw new Error(
+        `Lock claim failed for ${branch}: ${(
+          claim.stderr || claim.stdout || ''
+        ).trim()}`,
       );
+    }
+  }
 
-      try {
-        let commitState = { changed: false, committed: false };
-        if (worktreePath) {
-          commitState = autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options);
-        }
+  const deletedFiles = uniquePreserveOrder([
+    ...gitOutputLines(worktreePath, [
+      'diff',
+      '--name-only',
+      '--diff-filter=D',
+      '--',
+      '.',
+      ':(exclude).omx/state/agent-file-locks.json',
+    ]),
+    ...gitOutputLines(worktreePath, [
+      'diff',
+      '--cached',
+      '--name-only',
+      '--diff-filter=D',
+      '--',
+      '.',
+      ':(exclude).omx/state/agent-file-locks.json',
+    ]),
+  ]);
 
-        if (commitState.committed) {
-          autoCommitted += 1;
-          console.log(`[${TOOL_NAME}] Auto-committed '${branch}' before finish.`);
-        } else if (commitState.changed && commitState.dryRun) {
-          console.log(`[${TOOL_NAME}] [dry-run] Would auto-commit pending changes on '${branch}'.`);
-        }
+  if (deletedFiles.length > 0) {
+    const allowDelete = runPackageAsset('lockTool', ['allow-delete', '--branch', branch, ...deletedFiles], {
+      cwd: repoRoot,
+      stdio: 'pipe',
+    });
+    if (allowDelete.status !== 0) {
+      throw new Error(
+        `Delete-lock grant failed for ${branch}: ${(
+          allowDelete.stderr || allowDelete.stdout || ''
+        ).trim()}`,
+      );
+    }
+  }
+}
 
-        const finishArgs = [
-          '--branch',
-          branch,
-          '--base',
-          baseBranch,
-          options.waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
-          options.cleanup ? '--cleanup' : '--no-cleanup',
-        ];
-        if (options.mergeMode === 'pr') {
-          finishArgs.push('--via-pr');
-        } else if (options.mergeMode === 'direct') {
-          finishArgs.push('--direct-only');
-        } else {
-          finishArgs.push('--mode', 'auto');
-        }
-        if (options.keepRemote) {
-          finishArgs.push('--keep-remote-branch');
-        }
+function autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options) {
+  const hasChanges = worktreeHasLocalChanges(worktreePath);
+  if (!hasChanges) {
+    return { changed: false, committed: false };
+  }
 
-        if (options.dryRun) {
-          console.log(`[${TOOL_NAME}] [dry-run] Would run: gx branch finish ${finishArgs.join(' ')}`);
-          succeeded += 1;
-          continue;
-        }
+  if (options.noAutoCommit) {
+    throw new Error(
+      `Branch '${branch}' has local changes in ${worktreePath}. Re-run without --no-auto-commit or commit manually first.`,
+    );
+  }
 
-        const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot, stdio: 'pipe' });
-        if (finishResult.stdout) {
-          process.stdout.write(finishResult.stdout);
-        }
-        if (finishResult.stderr) {
-          process.stderr.write(finishResult.stderr);
-        }
-        if (finishResult.status !== 0) {
-          throw new Error(`agent-branch-finish exited with status ${finishResult.status}`);
-        }
+  if (options.dryRun) {
+    return { changed: true, committed: false, dryRun: true };
+  }
 
-        succeeded += 1;
-      } catch (error) {
-        failed += 1;
-        console.error(`[${TOOL_NAME}] Finish failed for '${branch}': ${error.message}`);
-        if (options.failFast) {
-          break;
-        }
+  claimLocksForAutoCommit(repoRoot, worktreePath, branch);
+
+  const addResult = run('git', ['-C', worktreePath, 'add', '-A'], { stdio: 'pipe' });
+  if (addResult.status !== 0) {
+    throw new Error(`git add failed in ${worktreePath}: ${(addResult.stderr || addResult.stdout || '').trim()}`);
+  }
+
+  const stagedHasChanges = run('git', [
+    '-C',
+    worktreePath,
+    'diff',
+    '--cached',
+    '--quiet',
+    '--',
+    '.',
+    ':(exclude).omx/state/agent-file-locks.json',
+  ], { stdio: 'pipe' }).status === 1;
+  if (!stagedHasChanges) {
+    return { changed: true, committed: false };
+  }
+
+  const commitMessage = options.commitMessage || `Auto-finish: ${branch}`;
+  const commitResult = run('git', ['-C', worktreePath, 'commit', '-m', commitMessage], { stdio: 'pipe' });
+  if (commitResult.status !== 0) {
+    throw new Error(
+      `Auto-commit failed on '${branch}': ${(
+        commitResult.stderr || commitResult.stdout || ''
+      ).trim()}`,
+    );
+  }
+
+  return { changed: true, committed: true, message: commitMessage };
+}
+
+function cleanup(rawArgs) {
+  const options = parseCleanupArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+
+  const args = [];
+  if (options.base) {
+    args.push('--base', options.base);
+  }
+  if (options.branch) {
+    args.push('--branch', options.branch);
+  }
+  if (options.forceDirty) {
+    args.push('--force-dirty');
+  }
+  if (options.dryRun) {
+    args.push('--dry-run');
+  }
+  if (!options.keepCleanWorktrees) {
+    args.push('--only-dirty-worktrees');
+  }
+  if (options.includePrMerged) {
+    args.push('--include-pr-merged');
+  }
+  if (options.idleMinutes > 0) {
+    args.push('--idle-minutes', String(options.idleMinutes));
+  }
+  if (options.maxBranches > 0) {
+    args.push('--max-branches', String(options.maxBranches));
+  }
+  args.push('--delete-branches');
+  if (!options.keepRemote) {
+    args.push('--delete-remote-branches');
+  }
+
+  const runCleanupCycle = () => {
+    const runResult = runPackageAsset('worktreePrune', args, { cwd: repoRoot, stdio: 'inherit' });
+    if (runResult.status !== 0) {
+      throw new Error('Cleanup command failed');
+    }
+  };
+
+  if (options.watch) {
+    let cycle = 0;
+    while (true) {
+      cycle += 1;
+      console.log(
+        `[${TOOL_NAME}] Cleanup watch cycle=${cycle} (interval=${options.intervalSeconds}s, idleMinutes=${options.idleMinutes}, maxBranches=${options.maxBranches > 0 ? options.maxBranches : 'unbounded'}).`,
+      );
+      runCleanupCycle();
+      if (options.once) {
+        break;
+      }
+      const sleepResult = run('sleep', [String(options.intervalSeconds)], { cwd: repoRoot });
+      if (sleepResult.status !== 0) {
+        throw new Error(`Cleanup watch sleep failed (interval=${options.intervalSeconds}s)`);
       }
     }
+    process.exitCode = 0;
+    return;
+  }
 
+  runCleanupCycle();
+  process.exitCode = 0;
+}
+
+function merge(rawArgs) {
+  const options = parseMergeArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+
+  const args = [];
+  if (options.base) {
+    args.push('--base', options.base);
+  }
+  if (options.into) {
+    args.push('--into', options.into);
+  }
+  if (options.task) {
+    args.push('--task', options.task);
+  }
+  if (options.agent) {
+    args.push('--agent', options.agent);
+  }
+  for (const branch of options.branches) {
+    args.push('--branch', branch);
+  }
+
+  const mergeResult = runPackageAsset('branchMerge', args, { cwd: repoRoot, stdio: 'pipe' });
+  if (mergeResult.stdout) {
+    process.stdout.write(mergeResult.stdout);
+  }
+  if (mergeResult.stderr) {
+    process.stderr.write(mergeResult.stderr);
+  }
+  if (mergeResult.status !== 0) {
+    throw new Error(`merge command failed with status ${mergeResult.status}`);
+  }
+
+  process.exitCode = 0;
+}
+
+function finish(rawArgs, defaults = {}) {
+  const options = parseFinishArgs(rawArgs, defaults);
+  const repoRoot = resolveRepoRoot(options.target);
+
+  const worktreeEntries = listAgentWorktrees(repoRoot);
+  const worktreeByBranch = new Map(worktreeEntries.map((entry) => [entry.branch, entry.worktreePath]));
+
+  let candidateBranches = [];
+  if (options.branch) {
+    if (!branchExists(repoRoot, options.branch)) {
+      throw new Error(`Local branch not found: ${options.branch}`);
+    }
+    candidateBranches = [options.branch];
+  } else {
+    candidateBranches = uniquePreserveOrder([
+      ...listLocalAgentBranchesForFinish(repoRoot),
+      ...worktreeEntries.map((entry) => entry.branch),
+    ]);
+  }
+
+  const candidates = [];
+  for (const branch of candidateBranches) {
+    const worktreePath = worktreeByBranch.get(branch) || '';
+    const baseBranch = resolveFinishBaseBranch(repoRoot, branch, options.base);
+    const hasChanges = worktreePath ? worktreeHasLocalChanges(worktreePath) : false;
+    const alreadyMerged = branchMergedIntoBase(repoRoot, branch, baseBranch);
+    if (options.all || options.branch || hasChanges || !alreadyMerged) {
+      candidates.push({
+        branch,
+        baseBranch,
+        worktreePath,
+        hasChanges,
+        alreadyMerged,
+      });
+    }
+  }
+
+  if (candidates.length === 0) {
+    console.log(`[${TOOL_NAME}] No pending agent branches to finish.`);
+    process.exitCode = 0;
+    return;
+  }
+
+  let succeeded = 0;
+  let failed = 0;
+  let autoCommitted = 0;
+
+  for (const candidate of candidates) {
+    const { branch, baseBranch, worktreePath } = candidate;
     console.log(
-      `[${TOOL_NAME}] Finish summary: total=${candidates.length}, success=${succeeded}, failed=${failed}, autoCommitted=${autoCommitted}`,
+      `[${TOOL_NAME}] Finishing '${branch}' -> '${baseBranch}'${worktreePath ? ` (${worktreePath})` : ''}...`,
     );
 
-    if (failed > 0) {
-      throw new Error('finish command failed for one or more agent branches');
-    }
+    try {
+      let commitState = { changed: false, committed: false };
+      if (worktreePath) {
+        commitState = autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options);
+      }
 
-    process.exitCode = 0;
+      if (commitState.committed) {
+        autoCommitted += 1;
+        console.log(`[${TOOL_NAME}] Auto-committed '${branch}' before finish.`);
+      } else if (commitState.changed && commitState.dryRun) {
+        console.log(`[${TOOL_NAME}] [dry-run] Would auto-commit pending changes on '${branch}'.`);
+      }
+
+      const finishArgs = [
+        '--branch',
+        branch,
+        '--base',
+        baseBranch,
+        options.waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
+        options.cleanup ? '--cleanup' : '--no-cleanup',
+      ];
+      if (options.mergeMode === 'pr') {
+        finishArgs.push('--via-pr');
+      } else if (options.mergeMode === 'direct') {
+        finishArgs.push('--direct-only');
+      } else {
+        finishArgs.push('--mode', 'auto');
+      }
+      if (options.keepRemote) {
+        finishArgs.push('--keep-remote-branch');
+      }
+
+      if (options.dryRun) {
+        console.log(`[${TOOL_NAME}] [dry-run] Would run: gx branch finish ${finishArgs.join(' ')}`);
+        succeeded += 1;
+        continue;
+      }
+
+      const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot, stdio: 'pipe' });
+      if (finishResult.stdout) {
+        process.stdout.write(finishResult.stdout);
+      }
+      if (finishResult.stderr) {
+        process.stderr.write(finishResult.stderr);
+      }
+      if (finishResult.status !== 0) {
+        throw new Error(`agent-branch-finish exited with status ${finishResult.status}`);
+      }
+
+      succeeded += 1;
+    } catch (error) {
+      failed += 1;
+      console.error(`[${TOOL_NAME}] Finish failed for '${branch}': ${error.message}`);
+      if (options.failFast) {
+        break;
+      }
+    }
   }
 
-  function sync(rawArgs) {
-    const options = parseSyncArgs(rawArgs);
-    const repoRoot = resolveRepoRoot(options.target);
-    const baseBranch = resolveBaseBranch(repoRoot, options.base);
-    const strategy = resolveSyncStrategy(repoRoot, options.strategy);
-    const baseRef = `origin/${baseBranch}`;
+  console.log(
+    `[${TOOL_NAME}] Finish summary: total=${candidates.length}, success=${succeeded}, failed=${failed}, autoCommitted=${autoCommitted}`,
+  );
 
-    ensureOriginBaseRef(repoRoot, baseBranch);
+  if (failed > 0) {
+    throw new Error('finish command failed for one or more agent branches');
+  }
 
-    if (options.allAgentBranches) {
-      const refs = gitRun(repoRoot, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/agent/*'], { allowFailure: true });
-      if (refs.status !== 0) {
-        throw new Error('Unable to list local agent branches');
-      }
-      const branches = (refs.stdout || '').split('\n').map((item) => item.trim()).filter(Boolean);
-      const rows = branches.map((branch) => {
-        const counts = aheadBehind(repoRoot, branch, baseRef);
-        return {
-          branch,
-          base: baseRef,
-          ahead: counts.ahead,
-          behind: counts.behind,
-          syncRequired: counts.behind > 0,
-        };
-      });
+  process.exitCode = 0;
+}
 
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify({
-          repoRoot,
-          base: baseRef,
-          branchCount: rows.length,
-          rows,
-        }, null, 2)}\n`);
+function sync(rawArgs) {
+  const options = parseSyncArgs(rawArgs);
+  const repoRoot = resolveRepoRoot(options.target);
+  const baseBranch = resolveBaseBranch(repoRoot, options.base);
+  const strategy = resolveSyncStrategy(repoRoot, options.strategy);
+  const baseRef = `origin/${baseBranch}`;
+
+  ensureOriginBaseRef(repoRoot, baseBranch);
+
+  if (options.allAgentBranches) {
+    const refs = gitRun(repoRoot, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/agent/*'], { allowFailure: true });
+    if (refs.status !== 0) {
+      throw new Error('Unable to list local agent branches');
+    }
+    const branches = (refs.stdout || '').split('\n').map((item) => item.trim()).filter(Boolean);
+    const rows = branches.map((branch) => {
+      const counts = aheadBehind(repoRoot, branch, baseRef);
+      return {
+        branch,
+        base: baseRef,
+        ahead: counts.ahead,
+        behind: counts.behind,
+        syncRequired: counts.behind > 0,
+      };
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({
+        repoRoot,
+        base: baseRef,
+        branchCount: rows.length,
+        rows,
+      }, null, 2)}\n`);
+    } else {
+      console.log(`[${TOOL_NAME}] Sync report target: ${repoRoot}`);
+      console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
+      if (rows.length === 0) {
+        console.log(`[${TOOL_NAME}] No local agent branches found.`);
       } else {
-        console.log(`[${TOOL_NAME}] Sync report target: ${repoRoot}`);
-        console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
-        if (rows.length === 0) {
-          console.log(`[${TOOL_NAME}] No local agent branches found.`);
-        } else {
-          for (const row of rows) {
-            console.log(`  - ${row.branch} | ahead ${row.ahead} | behind ${row.behind} | syncRequired=${row.syncRequired}`);
-          }
-        }
-      }
-
-      const hasBehind = rows.some((row) => row.behind > 0);
-      process.exitCode = options.check && hasBehind ? 1 : 0;
-      return;
-    }
-
-    const branch = currentBranchName(repoRoot);
-    if (!options.allowNonAgent && !branch.startsWith('agent/')) {
-      throw new Error(`sync is limited to agent/* branches by default (current: ${branch}). Use --allow-non-agent to override.`);
-    }
-
-    const dirty = workingTreeIsDirty(repoRoot);
-    if (!options.check && !options.allowDirty && dirty) {
-      throw new Error('Sync blocked: working tree is not clean. Commit or stash changes first, or pass --allow-dirty.');
-    }
-
-    const before = aheadBehind(repoRoot, branch, baseRef);
-
-    const payload = {
-      repoRoot,
-      branch,
-      base: baseRef,
-      strategy,
-      dirty,
-      aheadBefore: before.ahead,
-      behindBefore: before.behind,
-      syncRequired: before.behind > 0,
-      status: 'checked',
-    };
-
-    if (options.check) {
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
-      } else {
-        console.log(`[${TOOL_NAME}] Sync check target: ${repoRoot}`);
-        console.log(`[${TOOL_NAME}] Branch: ${branch}`);
-        console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
-        console.log(`[${TOOL_NAME}] Ahead: ${before.ahead}`);
-        console.log(`[${TOOL_NAME}] Behind: ${before.behind}`);
-        console.log(`[${TOOL_NAME}] Sync required: ${before.behind > 0 ? 'yes' : 'no'}`);
-      }
-      process.exitCode = before.behind > 0 ? 1 : 0;
-      return;
-    }
-
-    if (before.behind === 0) {
-      const result = { ...payload, status: 'no-op', aheadAfter: before.ahead, behindAfter: before.behind };
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-      } else {
-        console.log(`[${TOOL_NAME}] Branch '${branch}' is already up to date with ${baseRef}.`);
-      }
-      process.exitCode = 0;
-      return;
-    }
-
-    if (options.dryRun) {
-      const result = { ...payload, status: 'dry-run' };
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-      } else {
-        console.log(`[${TOOL_NAME}] Dry run: would sync '${branch}' onto ${baseRef} via ${strategy}.`);
-      }
-      process.exitCode = 0;
-      return;
-    }
-
-    const lockPath = path.join(repoRoot, LOCK_FILE_RELATIVE);
-    const lockState = lockRegistryStatus(repoRoot);
-    let lockBackup = null;
-    if (lockState.dirty && fs.existsSync(lockPath)) {
-      lockBackup = fs.readFileSync(lockPath, 'utf8');
-    }
-
-    if (lockState.dirty) {
-      if (lockState.untracked) {
-        fs.rmSync(lockPath, { force: true });
-      } else {
-        const resetLock = gitRun(repoRoot, ['checkout', '--', LOCK_FILE_RELATIVE], { allowFailure: true });
-        if (resetLock.status !== 0) {
-          throw new Error(`Unable to temporarily reset ${LOCK_FILE_RELATIVE} before sync`);
+        for (const row of rows) {
+          console.log(`  - ${row.branch} | ahead ${row.ahead} | behind ${row.behind} | syncRequired=${row.syncRequired}`);
         }
       }
     }
 
-    try {
-      syncOperation(repoRoot, strategy, baseRef, options.ffOnly);
-    } finally {
-      if (lockBackup !== null) {
-        fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-        fs.writeFileSync(lockPath, lockBackup, 'utf8');
-      }
-    }
-    const after = aheadBehind(repoRoot, branch, baseRef);
-    const result = {
-      ...payload,
-      status: 'success',
-      aheadAfter: after.ahead,
-      behindAfter: after.behind,
-    };
+    const hasBehind = rows.some((row) => row.behind > 0);
+    process.exitCode = options.check && hasBehind ? 1 : 0;
+    return;
+  }
 
+  const branch = currentBranchName(repoRoot);
+  if (!options.allowNonAgent && !branch.startsWith('agent/')) {
+    throw new Error(`sync is limited to agent/* branches by default (current: ${branch}). Use --allow-non-agent to override.`);
+  }
+
+  const dirty = workingTreeIsDirty(repoRoot);
+  if (!options.check && !options.allowDirty && dirty) {
+    throw new Error('Sync blocked: working tree is not clean. Commit or stash changes first, or pass --allow-dirty.');
+  }
+
+  const before = aheadBehind(repoRoot, branch, baseRef);
+
+  const payload = {
+    repoRoot,
+    branch,
+    base: baseRef,
+    strategy,
+    dirty,
+    aheadBefore: before.ahead,
+    behindBefore: before.behind,
+    syncRequired: before.behind > 0,
+    status: 'checked',
+  };
+
+  if (options.check) {
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+    } else {
+      console.log(`[${TOOL_NAME}] Sync check target: ${repoRoot}`);
+      console.log(`[${TOOL_NAME}] Branch: ${branch}`);
+      console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
+      console.log(`[${TOOL_NAME}] Ahead: ${before.ahead}`);
+      console.log(`[${TOOL_NAME}] Behind: ${before.behind}`);
+      console.log(`[${TOOL_NAME}] Sync required: ${before.behind > 0 ? 'yes' : 'no'}`);
+    }
+    process.exitCode = before.behind > 0 ? 1 : 0;
+    return;
+  }
+
+  if (before.behind === 0) {
+    const result = { ...payload, status: 'no-op', aheadAfter: before.ahead, behindAfter: before.behind };
     if (options.json) {
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     } else {
-      console.log(`[${TOOL_NAME}] Sync target: ${repoRoot}`);
-      console.log(`[${TOOL_NAME}] Branch: ${branch}`);
-      console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
-      console.log(`[${TOOL_NAME}] Strategy: ${strategy}`);
-      console.log(`[${TOOL_NAME}] Behind before sync: ${before.behind}`);
-      console.log(`[${TOOL_NAME}] Result: success (behind now: ${after.behind})`);
+      console.log(`[${TOOL_NAME}] Branch '${branch}' is already up to date with ${baseRef}.`);
     }
-
     process.exitCode = 0;
+    return;
   }
 
-  return {
-    cleanup,
-    merge,
-    finish,
-    sync,
+  if (options.dryRun) {
+    const result = { ...payload, status: 'dry-run' };
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      console.log(`[${TOOL_NAME}] Dry run: would sync '${branch}' onto ${baseRef} via ${strategy}.`);
+    }
+    process.exitCode = 0;
+    return;
+  }
+
+  const lockPath = path.join(repoRoot, LOCK_FILE_RELATIVE);
+  const lockState = lockRegistryStatus(repoRoot);
+  let lockBackup = null;
+  if (lockState.dirty && fs.existsSync(lockPath)) {
+    lockBackup = fs.readFileSync(lockPath, 'utf8');
+  }
+
+  if (lockState.dirty) {
+    if (lockState.untracked) {
+      fs.rmSync(lockPath, { force: true });
+    } else {
+      const resetLock = gitRun(repoRoot, ['checkout', '--', LOCK_FILE_RELATIVE], { allowFailure: true });
+      if (resetLock.status !== 0) {
+        throw new Error(`Unable to temporarily reset ${LOCK_FILE_RELATIVE} before sync`);
+      }
+    }
+  }
+
+  try {
+    syncOperation(repoRoot, strategy, baseRef, options.ffOnly);
+  } finally {
+    if (lockBackup !== null) {
+      fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+      fs.writeFileSync(lockPath, lockBackup, 'utf8');
+    }
+  }
+  const after = aheadBehind(repoRoot, branch, baseRef);
+  const result = {
+    ...payload,
+    status: 'success',
+    aheadAfter: after.ahead,
+    behindAfter: after.behind,
   };
+
+  if (options.json) {
+    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+  } else {
+    console.log(`[${TOOL_NAME}] Sync target: ${repoRoot}`);
+    console.log(`[${TOOL_NAME}] Branch: ${branch}`);
+    console.log(`[${TOOL_NAME}] Base: ${baseRef}`);
+    console.log(`[${TOOL_NAME}] Strategy: ${strategy}`);
+    console.log(`[${TOOL_NAME}] Behind before sync: ${before.behind}`);
+    console.log(`[${TOOL_NAME}] Result: success (behind now: ${after.behind})`);
+  }
+
+  process.exitCode = 0;
 }
 
 module.exports = {
-  createFinishApi,
+  cleanup,
+  merge,
+  finish,
+  sync,
 };
