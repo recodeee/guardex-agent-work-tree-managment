@@ -26,7 +26,9 @@ This change is complete only when **all** of the following are true:
 
 ## 4. Cleanup
 
-- [ ] 4.1 Commit the change with a Lore commit message.
-- [ ] 4.2 Run `gx branch finish --branch agent/codex/scope-gx-doctor-current-to-current-repo-2026-04-22-13-13 --via-pr --wait-for-merge --cleanup`.
-- [ ] 4.3 Record the PR URL and final merge state (`MERGED`) in the completion handoff.
-- [ ] 4.4 Confirm the sandbox worktree and branch refs are gone after cleanup.
+- [x] 4.1 Commit the change with a Lore commit message.
+- [x] 4.2 Run `gx branch finish --branch agent/codex/scope-gx-doctor-current-to-current-repo-2026-04-22-13-13 --via-pr --wait-for-merge --cleanup`.
+- [x] 4.3 Record the PR URL and final merge state (`MERGED`) in the completion handoff.
+- [x] 4.4 Confirm the sandbox worktree and branch refs are gone after cleanup.
+
+Completion handoff: PR https://github.com/recodeee/gitguardex/pull/298 state=`MERGED` merged_at=`2026-04-22T11:39:44Z`; `git worktree list` no longer shows `.omx/agent-worktrees/agent__codex__scope-gx-doctor-current-to-current-repo-2026-04-22-13-13`; `git branch -a --list 'agent/codex/scope-gx-doctor-current-to-current-repo-2026-04-22-13-13' 'origin/agent/codex/scope-gx-doctor-current-to-current-repo-2026-04-22-13-13'` returns no refs after `git fetch --prune origin`.
