@@ -830,6 +830,59 @@ test('doctor recurses into nested frontend repos and repairs protected-main drif
 });
 
 
+test('doctor --current limits repairs to the target repo only', () => {
+  const repoDir = initRepo();
+  const frontendDir = path.join(repoDir, 'frontend');
+  const frontendGitignorePath = path.join(frontendDir, '.gitignore');
+  fs.mkdirSync(frontendDir, { recursive: true });
+
+  let result = runCmd('git', ['init', '-b', 'main'], frontendDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  fs.writeFileSync(path.join(frontendDir, 'package.json'), '{}\n', 'utf8');
+  seedCommit(frontendDir);
+
+  result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const initialFrontendGitignore = fs.readFileSync(frontendGitignorePath, 'utf8');
+
+  fs.rmSync(path.join(frontendDir, 'AGENTS.md'));
+  fs.rmSync(path.join(frontendDir, 'scripts', 'guardex-env.sh'));
+  fs.rmSync(path.join(frontendDir, '.githooks', 'pre-commit'));
+  fs.writeFileSync(
+    frontendGitignorePath,
+    initialFrontendGitignore
+      .replace(/^scripts\/guardex-env\.sh\n/m, '')
+      .replace(/^\.githooks\n/m, ''),
+    'utf8',
+  );
+  fs.writeFileSync(path.join(frontendDir, '.omx', 'state', 'agent-file-locks.json'), '{broken json', 'utf8');
+
+  result = runNode(['doctor', '--target', repoDir, '--current'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.doesNotMatch(result.stdout, /Detected 2 git repos under/);
+  assert.doesNotMatch(result.stdout, new RegExp(`Doctor target: ${escapeRegexLiteral(frontendDir)}`));
+
+  assert.equal(fs.existsSync(path.join(frontendDir, 'AGENTS.md')), false, 'nested frontend AGENTS.md should stay broken');
+  assert.equal(
+    fs.existsSync(path.join(frontendDir, 'scripts', 'guardex-env.sh')),
+    false,
+    'nested frontend managed script should stay broken',
+  );
+  assert.equal(
+    fs.existsSync(path.join(frontendDir, '.githooks', 'pre-commit')),
+    false,
+    'nested frontend hook should stay broken',
+  );
+  assert.equal(fs.readFileSync(frontendGitignorePath, 'utf8'), initialFrontendGitignore
+    .replace(/^scripts\/guardex-env\.sh\n/m, '')
+    .replace(/^\.githooks\n/m, ''));
+  assert.equal(
+    fs.readFileSync(path.join(frontendDir, '.omx', 'state', 'agent-file-locks.json'), 'utf8'),
+    '{broken json',
+  );
+});
+
+
 test('recursive doctor forwards no-wait-for-merge to protected nested sandbox repairs', () => {
   const repoDir = initRepo();
   const frontendDir = path.join(repoDir, 'frontend');

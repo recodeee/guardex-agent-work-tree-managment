@@ -2088,6 +2088,10 @@ function parseDoctorArgs(rawArgs) {
 
   for (let index = 0; index < rawArgs.length; index += 1) {
     const arg = rawArgs[index];
+    if (arg === '--current') {
+      forwardedArgs.push('--single-repo');
+      continue;
+    }
     if (arg === '--verbose-auto-finish') {
       doctorDefaults.verboseAutoFinish = true;
       continue;
@@ -6056,7 +6060,7 @@ function doctor(rawArgs) {
     if (!options.json) {
       console.log(
         `[${TOOL_NAME}] Detected ${discoveredRepos.length} git repos under ${topRepoRoot}. ` +
-        `Repairing each with doctor (use --single-repo to limit to the target).`,
+        `Repairing each with doctor (use --single-repo or --current to limit to the target).`,
       );
     }
 
