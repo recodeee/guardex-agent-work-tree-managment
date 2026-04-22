@@ -1,0 +1,8 @@
+schema: 1
+plan: agent-codex-vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
+role: executor
+status: draft
+artifacts:
+  proposal: proposal.md
+  tasks: tasks.md
+  spec: specs/executor/spec.md
