@@ -10,6 +10,9 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm version" src="https://img.shields.io/npm/v/%40imdeadpool%2Fguardex?label=npm&style=flat-square&color=cb3837&logo=npm&logoColor=white"></a>
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm downloads per month" src="https://img.shields.io/npm/dm/%40imdeadpool%2Fguardex?label=downloads%2Fmonth&style=flat-square&color=0b76c5"></a>
+  <a href="https://github.com/recodeee/gitguardex/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/recodeee/gitguardex/ci.yml?branch=main&label=CI&style=flat-square"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/recodeee/gitguardex"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/recodeee/gitguardex?label=OpenSSF%20Scorecard&style=flat-square"></a>
   <a href="https://github.com/recodeee/gitguardex/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/recodeee/gitguardex?label=stars&style=flat-square&color=d4ac0d"></a>
   <a href="https://github.com/recodeee/gitguardex/commits/main"><img alt="last commit" src="https://img.shields.io/github/last-commit/recodeee/gitguardex?label=last%20commit&style=flat-square&color=7aa2f7"></a>
   <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/%40imdeadpool%2Fguardex?label=license&style=flat-square&color=97ca00"></a>
