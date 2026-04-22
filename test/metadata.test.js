@@ -30,6 +30,7 @@ test('security and contribution docs exist', () => {
 test('release workflow publishes with provenance in CI', () => {
   const workflowPath = path.join(repoRoot, '.github', 'workflows', 'release.yml');
   const workflow = fs.readFileSync(workflowPath, 'utf8');
+  assert.match(workflow, /name:\s+Checkout\s+uses:\s+actions\/checkout@[0-9a-f]{40}[^\n]*\n\s+with:\s*\n\s+fetch-depth:\s+0/s);
   assert.match(workflow, /npm publish --provenance --access public/);
 });
 
