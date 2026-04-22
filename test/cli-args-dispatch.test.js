@@ -187,8 +187,11 @@ test('scaffold reuses the shared destination-path helper from context', () => {
 
 test('cli main no longer keeps local copies of extracted shared helpers or dead cleanup code', () => {
   const source = fs.readFileSync(path.join(repoRoot, 'src', 'cli', 'main.js'), 'utf8');
+  const doctorSource = fs.readFileSync(path.join(repoRoot, 'src', 'doctor', 'index.js'), 'utf8');
+  const gitSource = fs.readFileSync(path.join(repoRoot, 'src', 'git', 'index.js'), 'utf8');
 
   assert.match(source, /require\('\.\.\/context'\)/);
+  assert.match(source, /require\('\.\.\/doctor'\)/);
   assert.match(source, /require\('\.\.\/output'\)/);
   assert.match(source, /require\('\.\.\/scaffold'\)/);
   assert.match(source, /require\('\.\/args'\)/);
@@ -207,6 +210,12 @@ test('cli main no longer keeps local copies of extracted shared helpers or dead 
   assert.doesNotMatch(source, /function resolveRepoRoot\(targetPath\)/);
   assert.doesNotMatch(source, /function isGitRepo\(targetPath\)/);
   assert.doesNotMatch(source, /function discoverNestedGitRepos\(rootPath, opts = \{\}\)/);
+  assert.doesNotMatch(source, /function readGitConfig\(repoRoot, key\)/);
+  assert.doesNotMatch(source, /function currentBranchName\(repoRoot\)/);
+  assert.doesNotMatch(source, /function workingTreeIsDirty\(repoRoot\)/);
+  assert.doesNotMatch(source, /function aheadBehind\(repoRoot, branchRef, baseRef\)/);
+  assert.doesNotMatch(source, /function branchExists\(repoRoot, branch\)/);
+  assert.doesNotMatch(source, /function branchMergedIntoBase\(repoRoot, branch, baseBranch\)/);
   assert.doesNotMatch(source, /function maybeSuggestCommand\(command\)/);
   assert.doesNotMatch(source, /function normalizeCommandOrThrow\(command\)/);
   assert.doesNotMatch(source, /function warnDeprecatedAlias\(aliasName\)/);
@@ -222,6 +231,26 @@ test('cli main no longer keeps local copies of extracted shared helpers or dead 
   assert.doesNotMatch(source, /function initWorkspace\(rawArgs\)/);
   assert.doesNotMatch(source, /function doctorAudit\(rawArgs\)/);
   assert.doesNotMatch(source, /function syncDoctorLocalSupportFiles\(repoRoot, dryRun\)/);
-  assert.equal((source.match(/function gitRefExists\(/g) || []).length, 1);
-  assert.equal((source.match(/Auto-finish flow failed for sandbox branch/g) || []).length, 1);
+  assert.doesNotMatch(source, /function parseGitPathList\(output\)/);
+  assert.doesNotMatch(source, /function collectDoctorChangedPaths\(worktreePath\)/);
+  assert.doesNotMatch(source, /function collectDoctorDeletedPaths\(worktreePath\)/);
+  assert.doesNotMatch(source, /function collectWorktreeDirtyPaths\(worktreePath\)/);
+  assert.doesNotMatch(source, /function claimDoctorChangedLocks\(metadata\)/);
+  assert.doesNotMatch(source, /function autoCommitDoctorSandboxChanges\(metadata\)/);
+  assert.doesNotMatch(source, /function finishDoctorSandboxBranch\(blocked, metadata, options = \{\}\)/);
+  assert.doesNotMatch(source, /function mergeDoctorSandboxRepairsBackToProtectedBase\(options, blocked, metadata, autoCommitResult, finishResult\)/);
+  assert.doesNotMatch(source, /function syncDoctorLockRegistryBeforeMerge\(repoRoot, metadata\)/);
+  assert.doesNotMatch(source, /function syncDoctorLockRegistryAfterMerge\(repoRoot, sandboxLockContent\)/);
+  assert.doesNotMatch(source, /function executeDoctorSandboxLifecycle\(options, blocked, metadata\)/);
+  assert.doesNotMatch(source, /function emitDoctorSandboxJsonOutput\(nestedResult, execution\)/);
+  assert.doesNotMatch(source, /function emitDoctorSandboxConsoleOutput\(options, blocked, metadata, startResult, nestedResult, execution\)/);
+  assert.doesNotMatch(source, /function runDoctorInSandbox\(options, blocked\)/);
+  assert.match(doctorSource, /function runDoctorInSandbox\(options, blocked, rawIntegrations = \{\}\)/);
+  assert.match(doctorSource, /function executeDoctorSandboxLifecycle\(options, blocked, metadata, integrations\)/);
+  assert.match(gitSource, /function readGitConfig\(repoRoot, key\)/);
+  assert.match(gitSource, /function currentBranchName\(repoRoot\)/);
+  assert.match(gitSource, /function workingTreeIsDirty\(repoRoot\)/);
+  assert.match(gitSource, /function aheadBehind\(repoRoot, branchRef, baseRef\)/);
+  assert.match(gitSource, /function branchMergedIntoBase\(repoRoot, branch, baseBranch\)/);
+  assert.equal((doctorSource.match(/Auto-finish flow failed for sandbox branch/g) || []).length, 1);
 });
