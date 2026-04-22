@@ -29,6 +29,8 @@ This change is complete only when **all** of the following are true:
 
 ## 4. Cleanup (mandatory; run before claiming completion)
 
-- [ ] 4.1 Run the cleanup pipeline: `gx branch finish --branch agent/<your-name>/<branch-slug> --base dev --via-pr --wait-for-merge --cleanup`. This handles commit -> push -> PR create -> merge wait -> worktree prune in one invocation.
-- [ ] 4.2 Record the PR URL and final merge state (`MERGED`) in the completion handoff.
-- [ ] 4.3 Confirm the sandbox worktree is gone (`git worktree list` no longer shows the agent path; `git branch -a` shows no surviving local/remote refs for the branch).
+- [x] 4.1 Run the cleanup pipeline: `gx branch finish --branch agent/codex/simple-record-merged-cleanup-evidence-fo-2026-04-22-12-32 --base main --via-pr --wait-for-merge --cleanup`. The command ran from the main checkout, merged PR #306, and pruned the original sandbox; it then hit the known already-deleted-remote-ref edge, so final ref cleanup was completed with `git fetch --prune origin`.
+- [x] 4.2 Record the PR URL and final merge state (`MERGED`) in the completion handoff. PR #306 (`https://github.com/recodeee/gitguardex/pull/306`) reached `MERGED` at `2026-04-22T12:58:38Z`; merge commit: `a40e42ba4edcd540a60a02c1d788a38a82236e3b`.
+- [x] 4.3 Confirm the sandbox worktree is gone (`git worktree list` no longer shows the agent path; `git branch -a` shows no surviving local/remote refs for the branch). The original worktree `agent__codex__masterplan__simple-record-merged-cleanup-evidence-fo-2026-04-22-12-32` is gone from `.omx/agent-worktrees/`, and after `git fetch --prune origin` there are no remaining local or remote refs for `agent/codex/simple-record-merged-cleanup-evidence-fo-2026-04-22-12-32`.
+
+Completion note: The routing fix landed via PR #306 (`https://github.com/recodeee/gitguardex/pull/306`), which reached `MERGED` at `2026-04-22T12:58:38Z` with merge commit `a40e42ba4edcd540a60a02c1d788a38a82236e3b`. The original agent worktree `agent__codex__masterplan__simple-record-merged-cleanup-evidence-fo-2026-04-22-12-32` was pruned by the finish flow, and the last stale remote-tracking ref was cleared with `git fetch --prune origin`.
