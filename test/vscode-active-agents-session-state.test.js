@@ -66,13 +66,19 @@ function createMockVscode(tempRoot) {
     treeViews: [],
     commands: new Map(),
     executedCommands: [],
+    sourceControls: [],
     terminals: [],
     openedDocuments: [],
     shownDocuments: [],
     infoMessages: [],
+<<<<<<< HEAD
     inputResponses: [],
     quickPickCalls: [],
     quickPickResponse: undefined,
+=======
+    informationMessages: [],
+    errorMessages: [],
+>>>>>>> 60c38c6 (Let operators commit the selected sandbox from the Active Agents SCM view)
     warningMessages: [],
     watchers: [],
   };
@@ -171,12 +177,42 @@ function createMockVscode(tempRoot) {
         Expanded: 1,
       },
       commands: {
-        executeCommand: async (...args) => {
-          registrations.executedCommands.push(args);
+        executeCommand: async (command, ...args) => {
+          registrations.executedCommands.push({ command, args });
+          if (command === 'setContext') {
+            return undefined;
+          }
+          const handler = registrations.commands.get(command);
+          if (handler) {
+            return handler(...args);
+          }
+          return undefined;
         },
         registerCommand: (command, handler) => {
           registrations.commands.set(command, handler);
-          return disposable();
+          return {
+            dispose() {
+              registrations.commands.delete(command);
+            },
+          };
+        },
+      },
+      scm: {
+        createSourceControl: (id, label) => {
+          const sourceControl = {
+            id,
+            label,
+            inputBox: {
+              value: '',
+              placeholder: '',
+              enabled: true,
+              visible: true,
+            },
+            acceptInputCommand: undefined,
+            dispose() {},
+          };
+          registrations.sourceControls.push(sourceControl);
+          return sourceControl;
         },
       },
       Uri: {
@@ -203,6 +239,13 @@ function createMockVscode(tempRoot) {
       window: {
         showInformationMessage: async (...args) => {
           registrations.infoMessages.push(args);
+          if (typeof args[0] === 'string') {
+            registrations.informationMessages.push(args[0]);
+          }
+          return undefined;
+        },
+        showErrorMessage: async (message) => {
+          registrations.errorMessages.push(message);
           return undefined;
         },
         showWarningMessage: async (...args) => {
@@ -235,11 +278,21 @@ function createMockVscode(tempRoot) {
           return { document };
         },
         createTreeView: (viewId, options) => {
+          const selectionListeners = [];
           const treeView = {
             viewId,
             options,
             badge: undefined,
             message: undefined,
+            onDidChangeSelection(listener) {
+              selectionListeners.push(listener);
+              return disposable();
+            },
+            fireSelection(selection) {
+              for (const listener of selectionListeners) {
+                listener({ selection });
+              }
+            },
             dispose() {},
           };
           registrations.treeViews.push(treeView);
@@ -449,7 +502,13 @@ test('active-agents extension registers tree and decoration providers', async ()
   extension.activate(context);
 
   assert.equal(registrations.treeViews.length, 1);
+  assert.equal(registrations.sourceControls.length, 1);
   assert.equal(registrations.treeViews[0].viewId, 'gitguardex.activeAgents');
+  assert.equal(registrations.sourceControls[0].label, 'Active Agents Commit');
+  assert.equal(
+    registrations.sourceControls[0].inputBox.placeholder,
+    'Pick an Active Agents session to commit its worktree.',
+  );
   assert.equal(registrations.providers.length, 1);
   assert.equal(registrations.providers[0].viewId, 'gitguardex.activeAgents');
   assert.equal(registrations.decorationProviders.length, 1);
@@ -1016,6 +1075,94 @@ test('active-agents extension splits working and thinking sessions into separate
     value: 2,
     tooltip: '2 active agents · 1 working now',
   });
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension commits the selected session worktree from the SCM input', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-commit-view-'));
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-commit-session-'));
+  initGitRepo(worktreePath);
+  fs.writeFileSync(path.join(worktreePath, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(worktreePath, ['add', 'tracked.txt']);
+  runGit(worktreePath, ['commit', '-m', 'baseline']);
+  fs.writeFileSync(path.join(worktreePath, 'tracked.txt'), 'base\nchanged\n', 'utf8');
+  fs.mkdirSync(path.join(worktreePath, '.omx', 'state'), { recursive: true });
+  fs.writeFileSync(
+    path.join(worktreePath, '.omx', 'state', 'agent-file-locks.json'),
+    '{"owner":"codex"}\n',
+    'utf8',
+  );
+
+  const sessionPath = sessionSchema.sessionFilePathForBranch(tempRoot, 'agent/codex/commit-task');
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+  fs.writeFileSync(
+    sessionPath,
+    `${JSON.stringify(sessionSchema.buildSessionRecord({
+      repoRoot: tempRoot,
+      branch: 'agent/codex/commit-task',
+      taskName: 'commit-task',
+      agentName: 'codex',
+      worktreePath,
+      pid: process.pid,
+      cliName: 'codex',
+    }), null, 2)}\n`,
+    'utf8',
+  );
+
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  vscode.workspace.findFiles = async () => [{ fsPath: sessionPath }];
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+
+  const provider = registrations.providers[0].provider;
+  const [repoItem] = await provider.getChildren();
+  const [agentsSection] = await provider.getChildren(repoItem);
+  const [workingSection] = await provider.getChildren(agentsSection);
+  const [sessionItem] = await provider.getChildren(workingSection);
+  registrations.treeViews[0].fireSelection([sessionItem]);
+
+  assert.equal(
+    registrations.sourceControls[0].inputBox.placeholder,
+    `Commit ${sessionItem.session.label} (Ctrl+Enter)`,
+  );
+  registrations.sourceControls[0].inputBox.value = 'Ship the selected sandbox';
+
+  await vscode.commands.executeCommand('gitguardex.activeAgents.commitSelectedSession');
+
+  const commitMessage = runGit(worktreePath, ['log', '-1', '--pretty=%s']).stdout.trim();
+  assert.equal(commitMessage, 'Ship the selected sandbox');
+  assert.equal(runGit(worktreePath, ['status', '--short', '--', 'tracked.txt']).stdout.trim(), '');
+  assert.equal(
+    runGit(worktreePath, ['status', '--short', '--', '.omx/state/agent-file-locks.json']).stdout.trim(),
+    '?? .omx/state/agent-file-locks.json',
+  );
+  assert.equal(registrations.sourceControls[0].inputBox.value, '');
+  assert.deepEqual(registrations.informationMessages, []);
+  assert.deepEqual(registrations.errorMessages, []);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension asks for a session before committing', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-no-selection-'));
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+  registrations.sourceControls[0].inputBox.value = 'Commit without a selection';
+
+  await vscode.commands.executeCommand('gitguardex.activeAgents.commitSelectedSession');
+
+  assert.deepEqual(registrations.informationMessages, ['Pick an Active Agents session first.']);
+  assert.deepEqual(registrations.errorMessages, []);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();

@@ -28,6 +28,11 @@
         "title": "Refresh Active Agents"
       },
       {
+        "command": "gitguardex.activeAgents.commitSelectedSession",
+        "title": "Commit Selected Session",
+        "icon": "$(check)"
+      },
+      {
         "command": "gitguardex.activeAgents.openWorktree",
         "title": "Open Agent Worktree"
       },
@@ -70,9 +75,14 @@
     "menus": {
       "view/title": [
         {
+          "command": "gitguardex.activeAgents.commitSelectedSession",
+          "when": "view == gitguardex.activeAgents",
+          "group": "navigation@1"
+        },
+        {
           "command": "gitguardex.activeAgents.refresh",
           "when": "view == gitguardex.activeAgents",
-          "group": "navigation"
+          "group": "navigation@9"
         }
       ],
       "view/item/context": [

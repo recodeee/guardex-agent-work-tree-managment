@@ -454,6 +454,7 @@ function countWorkingSessions(sessions) {
   return sessions.filter((session) => session.activityKind === 'working').length;
 }
 
+<<<<<<< HEAD
 function shellQuote(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }
@@ -529,6 +530,38 @@ async function startAgentFromPrompt(refresh) {
     true,
   );
   refresh();
+=======
+function sessionSelectionKey(session) {
+  if (!session?.repoRoot || !session?.branch) {
+    return '';
+  }
+
+  return `${session.repoRoot}::${session.branch}`;
+}
+
+function formatGitCommandFailure(error) {
+  for (const value of [error?.stderr, error?.stdout, error?.message]) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return 'Git command failed.';
+}
+
+function runGitCommand(worktreePath, args) {
+  return cp.execFileSync('git', ['-C', worktreePath, ...args], {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+}
+
+function stageWorktreeForCommit(worktreePath) {
+  runGitCommand(worktreePath, ['add', '-A', '--', '.', `:(exclude)${LOCK_FILE_RELATIVE}`]);
+}
+
+function commitWorktree(worktreePath, message) {
+  runGitCommand(worktreePath, ['commit', '-m', message]);
+>>>>>>> 60c38c6 (Let operators commit the selected sandbox from the Active Agents SCM view)
 }
 
 function buildActiveAgentGroupNodes(sessions) {
@@ -555,8 +588,11 @@ class ActiveAgentsProvider {
     this.decorationProvider = decorationProvider;
     this.onDidChangeTreeDataEmitter = new vscode.EventEmitter();
     this.onDidChangeTreeData = this.onDidChangeTreeDataEmitter.event;
+    this.onDidChangeSelectedSessionEmitter = new vscode.EventEmitter();
+    this.onDidChangeSelectedSession = this.onDidChangeSelectedSessionEmitter.event;
     this.treeView = null;
     this.lockRegistryByRepoRoot = new Map();
+    this.selectedSession = null;
   }
 
   getTreeItem(element) {
@@ -566,6 +602,35 @@ class ActiveAgentsProvider {
   attachTreeView(treeView) {
     this.treeView = treeView;
     this.updateViewState(0, 0);
+    treeView.onDidChangeSelection?.((event) => {
+      const sessionItem = event.selection.find((item) => item instanceof SessionItem);
+      this.setSelectedSession(sessionItem?.session || null);
+    });
+  }
+
+  setSelectedSession(session) {
+    const nextSession = session?.worktreePath ? { ...session } : null;
+    const currentKey = sessionSelectionKey(this.selectedSession);
+    const nextKey = sessionSelectionKey(nextSession);
+    this.selectedSession = nextSession;
+    if (currentKey !== nextKey) {
+      this.onDidChangeSelectedSessionEmitter.fire(this.selectedSession);
+    }
+  }
+
+  getSelectedSession() {
+    return this.selectedSession ? { ...this.selectedSession } : null;
+  }
+
+  syncSelectedSession(repoEntries) {
+    if (!this.selectedSession) {
+      return;
+    }
+
+    const nextSession = repoEntries
+      .flatMap((entry) => entry.sessions)
+      .find((session) => sessionSelectionKey(session) === sessionSelectionKey(this.selectedSession));
+    this.setSelectedSession(nextSession || null);
   }
 
   updateViewState(sessionCount, workingCount) {
@@ -634,6 +699,7 @@ class ActiveAgentsProvider {
     }
 
     const repoEntries = await this.syncRepoEntries();
+    this.syncSelectedSession(repoEntries);
 
     if (repoEntries.length === 0) {
       return [];
@@ -688,12 +754,62 @@ function activate(context) {
     treeDataProvider: provider,
     showCollapseAll: true,
   });
+  const sourceControl = vscode.scm.createSourceControl(
+    'gitguardex.activeAgents.commitInput',
+    'Active Agents Commit',
+  );
   provider.attachTreeView(treeView);
   const refresh = () => {
     void provider.refresh();
   };
   const sessionWatcher = vscode.workspace.createFileSystemWatcher('**/.omx/state/active-sessions/*.json');
   const lockWatcher = vscode.workspace.createFileSystemWatcher('**/.omx/state/agent-file-locks.json');
+  const updateCommitInput = (session) => {
+    sourceControl.inputBox.enabled = true;
+    sourceControl.inputBox.visible = true;
+    sourceControl.inputBox.placeholder = session?.label
+      ? `Commit ${session.label} (Ctrl+Enter)`
+      : 'Pick an Active Agents session to commit its worktree.';
+  };
+  updateCommitInput(null);
+  const commitSelectedSession = async () => {
+    const selectedSession = provider.getSelectedSession();
+    if (!selectedSession?.worktreePath) {
+      vscode.window.showInformationMessage?.('Pick an Active Agents session first.');
+      return;
+    }
+
+    const message = String(sourceControl.inputBox.value || '').trim();
+    if (!message) {
+      vscode.window.showInformationMessage?.('Enter a commit message first.');
+      return;
+    }
+
+    if (!fs.existsSync(selectedSession.worktreePath)) {
+      vscode.window.showInformationMessage?.(
+        `Selected session worktree is no longer on disk: ${selectedSession.worktreePath}`,
+      );
+      return;
+    }
+
+    try {
+      stageWorktreeForCommit(selectedSession.worktreePath);
+      commitWorktree(selectedSession.worktreePath, message);
+      sourceControl.inputBox.value = '';
+      refresh();
+    } catch (error) {
+      const failure = formatGitCommandFailure(error);
+      if (/nothing to commit|no changes added to commit/i.test(failure)) {
+        vscode.window.showInformationMessage?.(`No changes to commit in ${selectedSession.label}.`);
+        return;
+      }
+      vscode.window.showErrorMessage?.(`Active Agents commit failed: ${failure}`);
+    }
+  };
+  sourceControl.acceptInputCommand = {
+    command: 'gitguardex.activeAgents.commitSelectedSession',
+    title: 'Commit Selected Session',
+  };
   const interval = setInterval(refresh, 5_000);
   const refreshLockRegistry = (uri) => {
     if (uri?.fsPath) {
@@ -702,11 +818,15 @@ function activate(context) {
     refresh();
   };
 
+  provider.onDidChangeSelectedSession(updateCommitInput);
+
   context.subscriptions.push(
     treeView,
+    sourceControl,
     vscode.window.registerFileDecorationProvider(decorationProvider),
     vscode.commands.registerCommand('gitguardex.activeAgents.startAgent', () => startAgentFromPrompt(refresh)),
     vscode.commands.registerCommand('gitguardex.activeAgents.refresh', refresh),
+    vscode.commands.registerCommand('gitguardex.activeAgents.commitSelectedSession', commitSelectedSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.openWorktree', async (session) => {
       if (!session?.worktreePath) {
         return;
