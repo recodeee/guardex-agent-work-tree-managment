@@ -421,11 +421,49 @@ class SectionItem extends vscode.TreeItem {
   }
 }
 
-class SessionItem extends vscode.TreeItem {
-  constructor(session, items = []) {
-    const lockCount = Number.isFinite(session.lockCount) ? session.lockCount : 0;
+class WorktreeItem extends vscode.TreeItem {
+  constructor(worktreePath, sessions, items = [], options = {}) {
+    const normalizedWorktreePath = typeof worktreePath === 'string' ? worktreePath.trim() : '';
+    const sessionList = Array.isArray(sessions) ? sessions : [];
+    const changedCount = Number.isInteger(options.changedCount)
+      ? options.changedCount
+      : sessionList.reduce((total, session) => total + (session.changeCount || 0), 0);
+    const descriptionParts = [formatCountLabel(sessionList.length, 'agent')];
+    if (changedCount > 0) {
+      descriptionParts.push(`${changedCount} changed`);
+    }
     super(
-      session.label,
+      path.basename(normalizedWorktreePath || '') || 'worktree',
+      items.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
+    );
+    this.worktreePath = normalizedWorktreePath;
+    this.sessions = sessionList;
+    this.items = items;
+    this.description = options.description || descriptionParts.join(' · ');
+    this.tooltip = [
+      normalizedWorktreePath,
+      ...sessionList.map((session) => session.branch).filter(Boolean),
+    ].filter(Boolean).join('\n');
+    this.iconPath = new vscode.ThemeIcon('folder');
+    this.contextValue = 'gitguardex.worktree';
+    if (sessionList[0]?.worktreePath) {
+      this.command = {
+        command: 'gitguardex.activeAgents.openWorktree',
+        title: 'Open Agent Worktree',
+        arguments: [sessionList[0]],
+      };
+    }
+  }
+}
+
+class SessionItem extends vscode.TreeItem {
+  constructor(session, items = [], options = {}) {
+    const lockCount = Number.isFinite(session.lockCount) ? session.lockCount : 0;
+    const label = typeof options.label === 'string' && options.label.trim()
+      ? options.label.trim()
+      : session.label;
+    super(
+      label,
       items.length > 0 ? vscode.TreeItemCollapsibleState.Expanded : vscode.TreeItemCollapsibleState.None,
     );
     this.session = session;
@@ -542,6 +580,10 @@ function resolveStartAgentCommand(repoRoot, details) {
 
 function sessionDisplayLabel(session) {
   return session?.taskName || session?.label || session?.branch || path.basename(session?.worktreePath || '') || 'session';
+}
+
+function sessionTreeLabel(session) {
+  return session?.branch || sessionDisplayLabel(session);
 }
 
 function sessionWorktreePath(session) {
@@ -1151,6 +1193,36 @@ function countChangedPaths(repoRoot, sessions, changes) {
   return changedKeys.size;
 }
 
+function groupSessionsByWorktree(sessions) {
+  const sessionsByWorktree = new Map();
+
+  for (const session of sessions || []) {
+    const worktreePath = sessionWorktreePath(session);
+    const key = worktreePath || session?.branch || `session-${sessionsByWorktree.size + 1}`;
+    if (!sessionsByWorktree.has(key)) {
+      sessionsByWorktree.set(key, {
+        worktreePath,
+        sessions: [],
+      });
+    }
+    sessionsByWorktree.get(key).sessions.push(session);
+  }
+
+  return [...sessionsByWorktree.values()]
+    .map((entry) => ({
+      ...entry,
+      sessions: entry.sessions.sort((left, right) => (
+        sessionTreeLabel(left).localeCompare(sessionTreeLabel(right))
+      )),
+    }))
+    .sort((left, right) => {
+      const leftLabel = path.basename(left.worktreePath || '') || '';
+      const rightLabel = path.basename(right.worktreePath || '') || '';
+      return leftLabel.localeCompare(rightLabel)
+        || (left.worktreePath || '').localeCompare(right.worktreePath || '');
+    });
+}
+
 function buildGroupedChangeTreeNodes(sessions, changes) {
   const changesBySession = new Map();
   const sessionByChangedPath = new Map();
@@ -1183,15 +1255,22 @@ function buildGroupedChangeTreeNodes(sessions, changes) {
     changesBySession.get(session.branch).push(localizedChange);
   }
 
-  const items = sessions
-    .map((session) => {
-      const sessionChanges = changesBySession.get(session.branch) || [];
-      if (sessionChanges.length === 0) {
-        return null;
-      }
-      return new SessionItem(session, buildChangeTreeNodes(sessionChanges));
-    })
-    .filter(Boolean);
+  const items = groupSessionsByWorktree(
+    sessions.filter((session) => (changesBySession.get(session.branch) || []).length > 0),
+  ).map(({ worktreePath, sessions: worktreeSessions }) => {
+    const sessionItems = worktreeSessions.map((session) => (
+      new SessionItem(
+        session,
+        buildChangeTreeNodes(changesBySession.get(session.branch) || []),
+        { label: sessionTreeLabel(session) },
+      )
+    ));
+    const changedCount = worktreeSessions.reduce(
+      (total, session) => total + ((changesBySession.get(session.branch) || []).length),
+      0,
+    );
+    return new WorktreeItem(worktreePath, worktreeSessions, sessionItems, { changedCount });
+  });
 
   if (repoRootChanges.length > 0) {
     items.push(new SectionItem('Repo root', buildChangeTreeNodes(repoRootChanges), {
@@ -1319,14 +1398,20 @@ function commitWorktree(worktreePath, message) {
 function buildActiveAgentGroupNodes(sessions) {
   const groups = [];
   for (const group of SESSION_ACTIVITY_GROUPS) {
-    const groupSessions = sessions
-      .filter((session) => session.activityKind === group.kind)
-      .map((session) => new SessionItem(
-        session,
-        buildChangeTreeNodes(session.touchedChanges || []),
-      ));
-    if (groupSessions.length > 0) {
-      groups.push(new SectionItem(group.label, groupSessions));
+    const groupSessions = sessions.filter((session) => session.activityKind === group.kind);
+    const worktreeItems = groupSessionsByWorktree(groupSessions).map(({ worktreePath, sessions: worktreeSessions }) => (
+      new WorktreeItem(
+        worktreePath,
+        worktreeSessions,
+        worktreeSessions.map((session) => new SessionItem(
+          session,
+          buildChangeTreeNodes(session.touchedChanges || []),
+          { label: sessionTreeLabel(session) },
+        )),
+      )
+    ));
+    if (worktreeItems.length > 0) {
+      groups.push(new SectionItem(group.label, worktreeItems));
     }
   }
 
@@ -1488,7 +1573,7 @@ class ActiveAgentsProvider {
       return sectionItems;
     }
 
-    if (element instanceof SectionItem || element instanceof FolderItem || element instanceof SessionItem) {
+    if (element instanceof SectionItem || element instanceof FolderItem || element instanceof WorktreeItem || element instanceof SessionItem) {
       return element.items;
     }
 
