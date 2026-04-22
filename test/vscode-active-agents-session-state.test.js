@@ -1514,16 +1514,18 @@ test('active-agents extension decorates sessions and repo changes from the lock 
   const context = { subscriptions: [] };
 
   extension.activate(context);
+  await flushAsyncWork();
 
   const provider = registrations.providers[0].provider;
   const [repoItem] = await provider.getChildren();
   const [agentsSection, changesSection] = await provider.getChildren(repoItem);
-  const [thinkingSection] = await provider.getChildren(agentsSection);
-  const [sessionItem] = await provider.getChildren(thinkingSection);
+  const [idleSection] = await provider.getChildren(agentsSection);
+  const [sessionItem] = await provider.getChildren(idleSection);
   assert.equal(sessionItem.label, `${path.basename(worktreePath)} 🔒 1`);
   assert.match(sessionItem.tooltip, /Locks 1/);
 
-  const [changeItem] = await provider.getChildren(changesSection);
+  const [repoRootGroup] = await provider.getChildren(changesSection);
+  const [changeItem] = await provider.getChildren(repoRootGroup);
   assert.equal(changeItem.label, 'root-file.txt');
   assert.equal(changeItem.iconPath.id, 'warning');
   assert.match(changeItem.tooltip, /Locked by agent\/codex\/other-task/);
