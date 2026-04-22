@@ -671,6 +671,11 @@ npm pack --dry-run
 <details>
 <summary><strong>v7.x</strong></summary>
 
+### v7.0.22
+- Bumped `@imdeadpool/guardex` from `7.0.21` to `7.0.22` so npm can publish the next release from the current merged mainline.
+- The shipped `main` payload already includes lower-token prompt slices, SCM-selected lane visibility, truthful merged-cleanup evidence, the Active Agents brand/icon refresh, and the remaining CLI extraction cleanups without changing Guardex behavior.
+- Keep the release scoped to version and release metadata only; the package payload stays the same as the verified `main` branch contents.
+
 ### v7.0.21
 - Bumped `@imdeadpool/guardex` from `7.0.20` to `7.0.21` so npm can publish the next release from the current merged mainline.
 - Keep the release scoped to version and release metadata only; the package payload stays the same as the verified `main` branch contents.
