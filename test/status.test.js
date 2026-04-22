@@ -61,6 +61,8 @@ const {
   defineSpawnSuite,
 } = require('./helpers/install-test-helpers');
 
+const toolchainSourcePath = path.resolve(__dirname, '..', 'src', 'toolchain', 'index.js');
+
 defineSpawnSuite('status and update integration suite', () => {
 
 test('default invocation runs non-mutating status output', () => {
@@ -293,7 +295,7 @@ exit 1
 
 
 test('self-update prompt requires explicit y/n when approval is not preconfigured', () => {
-  const source = fs.readFileSync(cliPath, 'utf8');
+  const source = fs.readFileSync(toolchainSourcePath, 'utf8');
   assert.match(
     source,
     /const shouldUpdate = interactive\s*\?\s*promptYesNoStrict\(\s*`Update now\?\s*\(\$\{NPM_BIN\} i -g \$\{packageJson\.name\}@latest\)`\s*,?\s*\)\s*:\s*autoApproval;/s,
@@ -349,7 +351,7 @@ exit 1
 
 
 test('openspec update prompt requires explicit y/n when approval is not preconfigured', () => {
-  const source = fs.readFileSync(cliPath, 'utf8');
+  const source = fs.readFileSync(toolchainSourcePath, 'utf8');
   assert.match(
     source,
     /const shouldUpdate = interactive\s*\?\s*promptYesNoStrict\(\s*`Update OpenSpec now\?\s*\(\$\{NPM_BIN\} i -g \$\{OPENSPEC_PACKAGE\}@latest && \$\{OPENSPEC_BIN\} update\)`\s*,?\s*\)\s*:\s*autoApproval;/s,
