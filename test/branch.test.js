@@ -157,6 +157,47 @@ test('agent-branch-start moves protected-branch local changes into the new agent
   assert.doesNotMatch(stashList.stdout, /guardex-auto-transfer-/);
 });
 
+test('agent-branch-start restores protected-branch changes when startup fails after auto-transfer stash capture', () => {
+  const repoDir = initRepoOnBranch('main');
+  seedCommit(repoDir);
+  attachOriginRemoteForBranch(repoDir, 'main');
+
+  let result = runNode(['setup', '--target', repoDir, '--no-global-install'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  result = runCmd('git', ['add', '.'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['commit', '-m', 'apply gx setup'], repoDir, {
+    ALLOW_COMMIT_ON_PROTECTED_BRANCH: '1',
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  result = runCmd('git', ['push', 'origin', 'main'], repoDir);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const packageJsonPath = path.join(repoDir, 'package.json');
+  const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+  packageJson.name = 'demo-failed-auto-transfer';
+  fs.writeFileSync(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, 'utf8');
+  fs.mkdirSync(path.join(repoDir, 'memory-bank'), { recursive: true });
+  fs.writeFileSync(path.join(repoDir, 'memory-bank', 'note.md'), 'keep me local\n', 'utf8');
+
+  result = runBranchStart(['fail-after-auto-transfer', 'bot'], repoDir, {
+    GUARDEX_TEST_FAIL_AFTER_AUTO_TRANSFER_STASH: '1',
+  });
+  assert.equal(result.status, 1, 'branch start should fail after the simulated post-stash error');
+  assert.match(result.stderr, /Simulated failure after capturing auto-transfer stash/);
+  assert.match(result.stderr, /Restored moved changes back to 'main' after startup failure/);
+
+  const rootStatus = runCmd('git', ['status', '--short'], repoDir);
+  assert.equal(rootStatus.status, 0, rootStatus.stderr || rootStatus.stdout);
+  assert.match(rootStatus.stdout, / M package\.json/);
+  assert.match(rootStatus.stdout, /\?\? memory-bank\//);
+
+  const stashList = runCmd('git', ['stash', 'list'], repoDir);
+  assert.equal(stashList.status, 0, stashList.stderr || stashList.stdout);
+  assert.doesNotMatch(stashList.stdout, /guardex-auto-transfer-/);
+});
+
 
 test('agent-branch-start leaves removed workflow helpers out of new worktrees', () => {
   const repoDir = initRepo();

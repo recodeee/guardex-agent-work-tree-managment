@@ -155,6 +155,15 @@ env_flag_truthy() {
   esac
 }
 
+maybe_fail_after_auto_transfer_stash() {
+  if env_flag_truthy "${GUARDEX_TEST_FAIL_AFTER_AUTO_TRANSFER_STASH:-}"; then
+    echo "[agent-branch-start] Simulated failure after capturing auto-transfer stash." >&2
+    return 1
+  fi
+
+  return 0
+}
+
 default_worktree_root_rel() {
   local raw_agent="$1"
   local override="${GUARDEX_AGENT_TYPE:-}"
@@ -580,6 +589,27 @@ fi
 auto_transfer_stash_ref=""
 auto_transfer_message=""
 auto_transfer_source_branch=""
+auto_transfer_completed=0
+
+restore_auto_transfer_stash_on_failure() {
+  local exit_code="${1:-0}"
+  if [[ "$exit_code" -eq 0 ]] || [[ -z "$auto_transfer_stash_ref" ]] || [[ "$auto_transfer_completed" -eq 1 ]]; then
+    return 0
+  fi
+
+  local transfer_label="${auto_transfer_source_branch:-$BASE_BRANCH}"
+  if git -C "$repo_root" stash apply "$auto_transfer_stash_ref" >/dev/null 2>&1; then
+    git -C "$repo_root" stash drop "$auto_transfer_stash_ref" >/dev/null 2>&1 || true
+    auto_transfer_stash_ref=""
+    echo "[agent-branch-start] Restored moved changes back to '${transfer_label}' after startup failure." >&2
+  else
+    echo "[agent-branch-start] Startup failed and auto-restore also failed." >&2
+    echo "[agent-branch-start] Changes are preserved in ${auto_transfer_stash_ref} on ${transfer_label}." >&2
+  fi
+}
+
+trap 'restore_auto_transfer_stash_on_failure "$?"' EXIT
+
 current_branch="$(git -C "$repo_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 protected_branches_raw="$(resolve_protected_branches "$repo_root")"
 if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]] && is_protected_branch_name "$current_branch" "$protected_branches_raw"; then
@@ -593,6 +623,9 @@ if [[ -n "$current_branch" && "$current_branch" != "HEAD" ]] && is_protected_bra
       if [[ -n "$auto_transfer_stash_ref" ]]; then
         auto_transfer_source_branch="$current_branch"
         echo "[agent-branch-start] Detected local changes on protected branch '${current_branch}'. Moving them to '${branch_name}'..."
+        if ! maybe_fail_after_auto_transfer_stash; then
+          exit 1
+        fi
       fi
     fi
   fi
@@ -610,7 +643,9 @@ git -C "$worktree_path" branch --unset-upstream "$branch_name" >/dev/null 2>&1 |
 
 if [[ -n "$auto_transfer_stash_ref" ]]; then
   if git -C "$worktree_path" stash apply "$auto_transfer_stash_ref" >/dev/null 2>&1; then
+    auto_transfer_completed=1
     git -C "$repo_root" stash drop "$auto_transfer_stash_ref" >/dev/null 2>&1 || true
+    auto_transfer_stash_ref=""
     transfer_label="${auto_transfer_source_branch:-$BASE_BRANCH}"
     echo "[agent-branch-start] Moved local changes from '${transfer_label}' into '${branch_name}'."
   else
