@@ -1,7 +1,7 @@
 # Plan Summary: agent-codex-vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
 
 - **Mode:** ralplan
-- **Status:** draft ready for execution
+- **Status:** completed and merged as PR `#322`
 
 ## Context
 

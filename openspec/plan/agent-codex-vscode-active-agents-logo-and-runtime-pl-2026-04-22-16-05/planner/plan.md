@@ -130,21 +130,21 @@ It fixes the visible defect fast, keeps the diff reviewable, and avoids reopenin
 
 List exact commands with working directory and short expected outcomes.
 
-    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
+    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-im-2026-04-22-16-17
     rg -n "icon|loading~spin|AGENT.lock|active-sessions|CHANGES" vscode/guardex-active-agents templates/vscode/guardex-active-agents test/vscode-active-agents-session-state.test.js
     # Confirm the delta list before editing code.
 
-    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
+    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-im-2026-04-22-16-17
     node --test test/vscode-active-agents-session-state.test.js
     # Focused extension/install regression coverage.
 
-    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
+    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-im-2026-04-22-16-17
     openspec validate agent-codex-vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05 --type change --strict
     openspec validate --specs
     # Validate the new change artifacts and repo specs.
 
-    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05
-    gx branch finish --branch agent/codex/vscode-active-agents-logo-and-runtime-pl-2026-04-22-16-05 --base main --via-pr --wait-for-merge --cleanup
+    cd /home/deadpool/Documents/recodee/gitguardex/.omx/agent-worktrees/agent__codex__vscode-active-agents-logo-and-runtime-im-2026-04-22-16-17
+    gx branch finish --branch agent/codex/vscode-active-agents-logo-and-runtime-im-2026-04-22-16-17 --base main --via-pr --wait-for-merge --cleanup
     # Commit, push, PR, merge wait, and sandbox prune.
 
 ## Validation and Acceptance
