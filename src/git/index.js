@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const {
   path,
+  TOOL_NAME,
   GIT_PROTECTED_BRANCHES_KEY,
   GIT_BASE_BRANCH_KEY,
   GIT_SYNC_STRATEGY_KEY,
@@ -277,6 +278,39 @@ function readProtectedBranches(repoRoot) {
   return parsed;
 }
 
+function ensureSetupProtectedBranches(repoRoot, dryRun) {
+  const localUserBranches = listLocalUserBranches(repoRoot);
+  if (localUserBranches.length === 0) {
+    return {
+      status: 'unchanged',
+      file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
+      note: 'no additional local user branches detected',
+    };
+  }
+
+  const configured = readConfiguredProtectedBranches(repoRoot);
+  const currentBranches = configured || [...DEFAULT_PROTECTED_BRANCHES];
+  const missingBranches = localUserBranches.filter((branchName) => !currentBranches.includes(branchName));
+  if (missingBranches.length === 0) {
+    return {
+      status: 'unchanged',
+      file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
+      note: 'local user branches already protected',
+    };
+  }
+
+  const nextBranches = uniquePreserveOrder([...currentBranches, ...missingBranches]);
+  if (!dryRun) {
+    writeProtectedBranches(repoRoot, nextBranches);
+  }
+
+  return {
+    status: dryRun ? 'would-update' : 'updated',
+    file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
+    note: `added local user branch(es): ${missingBranches.join(', ')}`,
+  };
+}
+
 function writeProtectedBranches(repoRoot, branches) {
   if (branches.length === 0) {
     gitRun(repoRoot, ['config', '--unset-all', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
@@ -350,6 +384,37 @@ function hasOriginRemote(repoRoot) {
 
 function detectComposeHintFiles(repoRoot) {
   return COMPOSE_HINT_FILES.filter((relativePath) => fs.existsSync(path.join(repoRoot, relativePath)));
+}
+
+function printSetupRepoHints(repoRoot, baseBranch, repoLabel = '') {
+  const branchDisplay = readBranchDisplayName(repoRoot);
+  const hasHeadCommit = repoHasHeadCommit(repoRoot);
+  const hasOrigin = hasOriginRemote(repoRoot);
+  const composeFiles = detectComposeHintFiles(repoRoot);
+  if (hasHeadCommit && hasOrigin && composeFiles.length === 0) {
+    return;
+  }
+
+  const label = repoLabel ? ` ${repoLabel}` : '';
+  if (!hasHeadCommit) {
+    console.log(`[${TOOL_NAME}] Fresh repo onboarding${label}: current branch is ${branchDisplay}.`);
+    console.log(`[${TOOL_NAME}] Bootstrap commit${label}: git add . && git commit -m "bootstrap gitguardex"`);
+    console.log(
+      `[${TOOL_NAME}] First agent flow${label}: ` +
+      `gx branch start "<task>" "codex" -> ` +
+      `gx locks claim --branch "$(git branch --show-current)" <file...> -> ` +
+      `gx branch finish --branch "$(git branch --show-current)" --base ${baseBranch} --via-pr --wait-for-merge`,
+    );
+  }
+  if (!hasOrigin) {
+    console.log(`[${TOOL_NAME}] No origin remote${label}: finish and auto-merge flows stay local until you add one.`);
+  }
+  if (composeFiles.length > 0) {
+    console.log(
+      `[${TOOL_NAME}] Docker Compose helper${label}: detected ${composeFiles.join(', ')}. ` +
+      `Set GUARDEX_DOCKER_SERVICE and run 'bash scripts/guardex-docker-loader.sh -- <command...>'.`,
+    );
+  }
 }
 
 function workingTreeIsDirty(repoRoot) {
@@ -631,6 +696,7 @@ module.exports = {
   gitRefExists,
   hasSignificantWorkingTreeChanges,
   readProtectedBranches,
+  ensureSetupProtectedBranches,
   writeProtectedBranches,
   readGitConfig,
   resolveBaseBranch,
@@ -641,6 +707,7 @@ module.exports = {
   hasOriginRemote,
   repoHasOriginRemote: hasOriginRemote,
   detectComposeHintFiles,
+  printSetupRepoHints,
   workingTreeIsDirty,
   ensureRepoBranch,
   ensureOriginBaseRef,

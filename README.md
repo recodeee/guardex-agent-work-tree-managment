@@ -45,6 +45,10 @@ npm i -g @imdeadpool/guardex
   <strong>guard many agent. keep one repo clean.</strong>
 </p>
 
+[about_description.txt](./about_description.txt)
+
+Guardian T-Rex for your multi-agent repo. Isolated worktrees, file locks, and PR-only merges stop parallel Codex & Claude agents from overwriting each other's work. Auto-wires Oh My Codex, Oh My Claude, OpenSpec, and Caveman.
+
 <p align="center">
   Guardian T-Rex for your multi-agent repo. Isolated worktrees, file locks, and PR-only merges stop parallel Codex & Claude agents from overwriting each other's work. Auto-wires Oh My Codex, Oh My Claude, OpenSpec, and Caveman.
 </p>

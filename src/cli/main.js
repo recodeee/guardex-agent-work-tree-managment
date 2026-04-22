@@ -3,7 +3,7 @@
 const hooksModule = require('../hooks');
 const sandboxModule = require('../sandbox');
 const toolchainModule = require('../toolchain');
-const finishModule = require('../finish');
+const finishCommands = require('../finish');
 const doctorModule = require('../doctor');
 const {
   fs,
@@ -73,14 +73,37 @@ const {
   resolveRepoRoot,
   isGitRepo,
   discoverNestedGitRepos,
+  uniquePreserveOrder,
+  listLocalUserBranches,
+  listLocalAgentBranches,
+  mapWorktreePathsByBranch,
   gitRefExists,
+  hasSignificantWorkingTreeChanges,
+  readConfiguredProtectedBranches,
+  readProtectedBranches,
+  ensureSetupProtectedBranches,
+  writeProtectedBranches,
   readGitConfig,
+  resolveBaseBranch,
+  resolveSyncStrategy,
   currentBranchName,
+  repoHasHeadCommit,
+  readBranchDisplayName,
+  hasOriginRemote: repoHasOriginRemote,
+  detectComposeHintFiles,
+  printSetupRepoHints,
   ensureRepoBranch,
+  ensureOriginBaseRef,
   workingTreeIsDirty,
   aheadBehind,
+  lockRegistryStatus,
+  listAgentWorktrees,
+  listLocalAgentBranchesForFinish,
+  worktreeHasLocalChanges,
   branchExists,
+  resolveFinishBaseBranch,
   branchMergedIntoBase,
+  syncOperation,
 } = require('../git');
 const {
   run,
@@ -131,93 +154,29 @@ const {
   renderShellDispatchShim,
   renderPythonDispatchShim,
   managedForceConflictMessage,
+  renderManagedFile,
+  ensureGeneratedScriptShim,
+  ensureHookShim,
+  copyTemplateFile,
+  ensureTemplateFilePresent,
+  ensureOmxScaffold,
+  ensureLockRegistry,
+  lockStateOrError,
+  writeLockState,
+  removeLegacyPackageScripts,
+  installUserLevelAsset,
+  removeLegacyManagedRepoFile,
+  ensureAgentsSnippet,
+  ensureManagedGitignore,
+  stripJsonComments,
+  stripJsonTrailingCommas,
+  parseJsonObjectLikeFile,
+  buildRepoVscodeSettings,
+  ensureRepoVscodeSettings,
+  configureHooks,
   printOperations,
   printStandaloneOperations,
 } = require('../scaffold');
-
-let sandboxApi;
-let toolchainApi;
-let finishApi;
-
-function getSandboxApi() {
-  if (!sandboxApi) {
-    sandboxApi = sandboxModule.createSandboxApi({
-      protectedBaseWriteBlock,
-      runInstallInternal,
-      ensureSetupProtectedBranches,
-      ensureParentWorkspaceView,
-      buildParentWorkspaceView,
-      runFixInternal,
-    });
-  }
-  return sandboxApi;
-}
-
-function getToolchainApi() {
-  if (!toolchainApi) {
-    toolchainApi = toolchainModule.createToolchainApi({
-      TOOL_NAME,
-      NPM_BIN,
-      NPX_BIN,
-      packageJson,
-      OPENSPEC_PACKAGE,
-      OPENSPEC_BIN,
-      GLOBAL_TOOLCHAIN_PACKAGES,
-      parseAutoApproval,
-      isInteractiveTerminal,
-      promptYesNoStrict,
-      run,
-      checkForGuardexUpdate,
-      printUpdateAvailableBanner,
-      readInstalledGuardexVersion,
-      restartIntoUpdatedGuardex,
-      checkForOpenSpecPackageUpdate,
-      printOpenSpecUpdateAvailableBanner,
-      resolveGlobalInstallApproval,
-      detectGlobalToolchainPackages,
-      detectOptionalLocalCompanionTools,
-      formatGlobalToolchainServiceName,
-      askGlobalInstallForMissing,
-    });
-  }
-  return toolchainApi;
-}
-
-function getFinishApi() {
-  if (!finishApi) {
-    finishApi = finishModule.createFinishApi({
-      TOOL_NAME,
-      LOCK_FILE_RELATIVE,
-      path,
-      fs,
-      run,
-      runPackageAsset,
-      resolveRepoRoot,
-      parseCleanupArgs,
-      parseMergeArgs,
-      parseFinishArgs,
-      parseSyncArgs,
-      listAgentWorktrees,
-      listLocalAgentBranchesForFinish,
-      uniquePreserveOrder,
-      branchExists,
-      resolveFinishBaseBranch,
-      worktreeHasLocalChanges,
-      branchMergedIntoBase,
-      autoCommitWorktreeForFinish,
-      resolveBaseBranch,
-      resolveSyncStrategy,
-      ensureOriginBaseRef,
-      gitRun,
-      currentBranchName,
-      workingTreeIsDirty,
-      aheadBehind,
-      lockRegistryStatus,
-      syncOperation,
-    });
-  }
-  return finishApi;
-}
 
 /**
  * @typedef {Object} AutoFinishSummary
@@ -273,609 +232,6 @@ function getFinishApi() {
  * @property {AutoFinishSummary} autoFinish
  * @property {string | null} sandboxLockContent
  */
-function renderManagedFile(repoRoot, relativePath, content, options = {}) {
-  const destinationPath = path.join(repoRoot, relativePath);
-  const destinationExists = fs.existsSync(destinationPath);
-  const force = Boolean(options.force);
-  const dryRun = Boolean(options.dryRun);
-
-  if (destinationExists) {
-    const existingContent = fs.readFileSync(destinationPath, 'utf8');
-    if (existingContent === content) {
-      ensureExecutable(destinationPath, relativePath, dryRun);
-      return { status: 'unchanged', file: relativePath };
-    }
-    if (!force && !isCriticalGuardrailPath(relativePath)) {
-      throw new Error(managedForceConflictMessage(relativePath));
-    }
-  }
-
-  ensureParentDir(repoRoot, destinationPath, dryRun);
-  if (!dryRun) {
-    fs.writeFileSync(destinationPath, content, 'utf8');
-    ensureExecutable(destinationPath, relativePath, dryRun);
-  }
-
-  if (destinationExists && !force && isCriticalGuardrailPath(relativePath)) {
-    return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: relativePath };
-  }
-
-  return { status: destinationExists ? 'overwritten' : 'created', file: relativePath };
-}
-
-function ensureGeneratedScriptShim(repoRoot, spec, options = {}) {
-  const content = spec.kind === 'python'
-    ? renderPythonDispatchShim(spec.command)
-    : renderShellDispatchShim(spec.command);
-  return renderManagedFile(repoRoot, spec.relativePath, content, options);
-}
-
-function ensureHookShim(repoRoot, hookName, options = {}) {
-  return renderManagedFile(
-    repoRoot,
-    path.posix.join('.githooks', hookName),
-    renderShellDispatchShim(['hook', 'run', hookName]),
-    options,
-  );
-}
-
-function copyTemplateFile(repoRoot, relativeTemplatePath, force, dryRun) {
-  const sourcePath = path.join(TEMPLATE_ROOT, relativeTemplatePath);
-  const destinationRelativePath = toDestinationPath(relativeTemplatePath);
-  const destinationPath = path.join(repoRoot, destinationRelativePath);
-
-  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
-  const destinationExists = fs.existsSync(destinationPath);
-
-  if (destinationExists) {
-    const existingContent = fs.readFileSync(destinationPath, 'utf8');
-    if (existingContent === sourceContent) {
-      ensureExecutable(destinationPath, destinationRelativePath, dryRun);
-      return { status: 'unchanged', file: destinationRelativePath };
-    }
-    if (!force && !isCriticalGuardrailPath(destinationRelativePath)) {
-      throw new Error(managedForceConflictMessage(destinationRelativePath));
-    }
-  }
-
-  ensureParentDir(repoRoot, destinationPath, dryRun);
-  if (!dryRun) {
-    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
-    ensureExecutable(destinationPath, destinationRelativePath, dryRun);
-  }
-
-  if (destinationExists && !force && isCriticalGuardrailPath(destinationRelativePath)) {
-    return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: destinationRelativePath };
-  }
-
-  return { status: destinationExists ? 'overwritten' : 'created', file: destinationRelativePath };
-}
-
-function ensureTemplateFilePresent(repoRoot, relativeTemplatePath, dryRun) {
-  const sourcePath = path.join(TEMPLATE_ROOT, relativeTemplatePath);
-  const destinationRelativePath = toDestinationPath(relativeTemplatePath);
-  const destinationPath = path.join(repoRoot, destinationRelativePath);
-  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
-
-  if (fs.existsSync(destinationPath)) {
-    const existingContent = fs.readFileSync(destinationPath, 'utf8');
-    if (existingContent === sourceContent) {
-      ensureExecutable(destinationPath, destinationRelativePath, dryRun);
-      return { status: 'unchanged', file: destinationRelativePath };
-    }
-
-    if (isCriticalGuardrailPath(destinationRelativePath)) {
-      if (!dryRun) {
-        fs.writeFileSync(destinationPath, sourceContent, 'utf8');
-        ensureExecutable(destinationPath, destinationRelativePath, dryRun);
-      }
-      return { status: dryRun ? 'would-repair-critical' : 'repaired-critical', file: destinationRelativePath };
-    }
-
-    // In fix mode, avoid silently replacing local customizations.
-    return { status: 'skipped-conflict', file: destinationRelativePath };
-  }
-
-  ensureParentDir(repoRoot, destinationPath, dryRun);
-  if (!dryRun) {
-    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
-    ensureExecutable(destinationPath, destinationRelativePath, dryRun);
-  }
-
-  return { status: 'created', file: destinationRelativePath };
-}
-
-function ensureTargetedLegacyWorkflowShims(repoRoot, options) {
-  const targetedPaths = Array.isArray(options.forceManagedPaths) ? options.forceManagedPaths : [];
-  if (targetedPaths.length === 0) {
-    return [];
-  }
-
-  const operations = [];
-  for (const shim of LEGACY_WORKFLOW_SHIM_SPECS) {
-    if (!shouldForceManagedPath(options, shim.relativePath)) {
-      continue;
-    }
-    operations.push(ensureGeneratedScriptShim(repoRoot, shim, { dryRun: options.dryRun, force: true }));
-  }
-  return operations;
-}
-
-function lockFilePath(repoRoot) {
-  return path.join(repoRoot, LOCK_FILE_RELATIVE);
-}
-
-function ensureOmxScaffold(repoRoot, dryRun) {
-  const operations = [];
-
-  for (const relativeDir of REPO_SCAFFOLD_DIRECTORIES) {
-    const absoluteDir = path.join(repoRoot, relativeDir);
-    if (fs.existsSync(absoluteDir)) {
-      if (!fs.statSync(absoluteDir).isDirectory()) {
-        throw new Error(`Expected directory at ${relativeDir} but found a file.`);
-      }
-      operations.push({ status: 'unchanged', file: relativeDir });
-      continue;
-    }
-
-    if (!dryRun) {
-      fs.mkdirSync(absoluteDir, { recursive: true });
-    }
-    operations.push({ status: 'created', file: relativeDir });
-  }
-
-  for (const relativeDir of OMX_SCAFFOLD_DIRECTORIES) {
-    const absoluteDir = path.join(repoRoot, relativeDir);
-    if (fs.existsSync(absoluteDir)) {
-      if (!fs.statSync(absoluteDir).isDirectory()) {
-        throw new Error(`Expected directory at ${relativeDir} but found a file.`);
-      }
-      operations.push({ status: 'unchanged', file: relativeDir });
-      continue;
-    }
-
-    if (!dryRun) {
-      fs.mkdirSync(absoluteDir, { recursive: true });
-    }
-    operations.push({ status: 'created', file: relativeDir });
-  }
-
-  for (const [relativeFile, defaultContent] of OMX_SCAFFOLD_FILES.entries()) {
-    const absoluteFile = path.join(repoRoot, relativeFile);
-    if (fs.existsSync(absoluteFile)) {
-      if (!fs.statSync(absoluteFile).isFile()) {
-        throw new Error(`Expected file at ${relativeFile} but found a directory.`);
-      }
-      operations.push({ status: 'unchanged', file: relativeFile });
-      continue;
-    }
-
-    if (!dryRun) {
-      fs.mkdirSync(path.dirname(absoluteFile), { recursive: true });
-      fs.writeFileSync(absoluteFile, defaultContent, 'utf8');
-    }
-    operations.push({ status: 'created', file: relativeFile });
-  }
-
-  return operations;
-}
-
-function ensureLockRegistry(repoRoot, dryRun) {
-  const absolutePath = lockFilePath(repoRoot);
-  if (fs.existsSync(absolutePath)) {
-    return { status: 'unchanged', file: LOCK_FILE_RELATIVE };
-  }
-
-  if (!dryRun) {
-    fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
-    fs.writeFileSync(absolutePath, JSON.stringify({ locks: {} }, null, 2) + '\n', 'utf8');
-  }
-
-  return { status: 'created', file: LOCK_FILE_RELATIVE };
-}
-
-function lockStateOrError(repoRoot) {
-  const lockPath = lockFilePath(repoRoot);
-  if (!fs.existsSync(lockPath)) {
-    return { ok: false, error: `${LOCK_FILE_RELATIVE} is missing` };
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.locks !== 'object' || parsed.locks === null) {
-      return { ok: false, error: `${LOCK_FILE_RELATIVE} has invalid schema (expected { locks: {} })` };
-    }
-
-    // Normalize older schema entries.
-    for (const [filePath, entry] of Object.entries(parsed.locks)) {
-      if (!entry || typeof entry !== 'object') {
-        parsed.locks[filePath] = { branch: '', claimed_at: '', allow_delete: false };
-        continue;
-      }
-      if (!Object.prototype.hasOwnProperty.call(entry, 'allow_delete')) {
-        entry.allow_delete = false;
-      }
-    }
-
-    return { ok: true, raw: parsed, locks: parsed.locks };
-  } catch (error) {
-    return { ok: false, error: `${LOCK_FILE_RELATIVE} is invalid JSON: ${error.message}` };
-  }
-}
-
-function writeLockState(repoRoot, payload, dryRun) {
-  if (dryRun) return;
-  const lockPath = lockFilePath(repoRoot);
-  fs.mkdirSync(path.dirname(lockPath), { recursive: true });
-  fs.writeFileSync(lockPath, JSON.stringify(payload, null, 2) + '\n', 'utf8');
-}
-
-function removeLegacyPackageScripts(repoRoot, dryRun) {
-  const packagePath = path.join(repoRoot, 'package.json');
-  if (!fs.existsSync(packagePath)) {
-    return { status: 'skipped', file: 'package.json', note: 'package.json not found' };
-  }
-
-  let pkg;
-  try {
-    pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-  } catch (error) {
-    throw new Error(`Unable to parse package.json in target repo: ${error.message}`);
-  }
-
-  const existingScripts = pkg.scripts && typeof pkg.scripts === 'object'
-    ? pkg.scripts
-    : {};
-  pkg.scripts = existingScripts;
-  let changed = false;
-  for (const [key, value] of Object.entries(LEGACY_MANAGED_PACKAGE_SCRIPTS)) {
-    if (existingScripts[key] === value) {
-      delete existingScripts[key];
-      changed = true;
-    }
-  }
-
-  if (!changed) {
-    return { status: 'unchanged', file: 'package.json', note: 'no Guardex-managed agent:* scripts found' };
-  }
-
-  if (!dryRun) {
-    fs.writeFileSync(packagePath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
-  }
-
-  return { status: dryRun ? 'would-update' : 'updated', file: 'package.json', note: 'removed Guardex-managed agent:* scripts' };
-}
-
-function installUserLevelAsset(asset, options = {}) {
-  const dryRun = Boolean(options.dryRun);
-  const force = Boolean(options.force);
-  const destinationPath = path.join(GUARDEX_HOME_DIR, asset.destination);
-  const sourceContent = fs.readFileSync(asset.source, 'utf8');
-  const destinationExists = fs.existsSync(destinationPath);
-
-  if (destinationExists) {
-    const existingContent = fs.readFileSync(destinationPath, 'utf8');
-    if (existingContent === sourceContent) {
-      return { status: 'unchanged', file: asset.destination };
-    }
-    if (!force) {
-      return { status: 'skipped-conflict', file: asset.destination };
-    }
-  }
-
-  if (!dryRun) {
-    fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-    fs.writeFileSync(destinationPath, sourceContent, 'utf8');
-  }
-  return { status: destinationExists ? (dryRun ? 'would-update' : 'updated') : 'created', file: asset.destination };
-}
-
-function removeLegacyManagedRepoFile(repoRoot, relativePath, options = {}) {
-  const dryRun = Boolean(options.dryRun);
-  const force = Boolean(options.force);
-  const absolutePath = path.join(repoRoot, relativePath);
-  if (!fs.existsSync(absolutePath)) {
-    return { status: 'unchanged', file: relativePath, note: 'not present' };
-  }
-  if (!fs.statSync(absolutePath).isFile()) {
-    return { status: 'skipped-conflict', file: relativePath, note: 'not a regular file' };
-  }
-
-  const skillAsset = USER_LEVEL_SKILL_ASSETS.find((asset) => asset.destination === relativePath);
-  if (skillAsset) {
-    const userLevelPath = path.join(GUARDEX_HOME_DIR, skillAsset.destination);
-    if (!fs.existsSync(userLevelPath)) {
-      return { status: 'skipped', file: relativePath, note: 'user-level replacement not installed' };
-    }
-  }
-
-  const templateRelative = skillAsset
-    ? skillAsset.source.slice(TEMPLATE_ROOT.length + 1)
-    : relativePath.replace(/^\./, '');
-  const sourcePath = path.join(TEMPLATE_ROOT, templateRelative);
-  if (!fs.existsSync(sourcePath)) {
-    return { status: 'skipped', file: relativePath, note: 'template source missing' };
-  }
-
-  const sourceContent = fs.readFileSync(sourcePath, 'utf8');
-  const existingContent = fs.readFileSync(absolutePath, 'utf8');
-  if (existingContent !== sourceContent && !force) {
-    return { status: 'skipped-conflict', file: relativePath, note: 'local edits differ from managed template' };
-  }
-
-  if (!dryRun) {
-    fs.rmSync(absolutePath, { force: true });
-  }
-  return { status: dryRun ? 'would-remove' : 'removed', file: relativePath };
-}
-
-function ensureAgentsSnippet(repoRoot, dryRun, options = {}) {
-  const agentsPath = path.join(repoRoot, 'AGENTS.md');
-  const snippet = fs.readFileSync(path.join(TEMPLATE_ROOT, 'AGENTS.multiagent-safety.md'), 'utf8').trimEnd();
-  const managedRegex = new RegExp(
-    `${AGENTS_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${AGENTS_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-    'm',
-  );
-
-  if (!fs.existsSync(agentsPath)) {
-    if (!dryRun) {
-      fs.writeFileSync(agentsPath, `# AGENTS\n\n${snippet}\n`, 'utf8');
-    }
-    return { status: 'created', file: 'AGENTS.md' };
-  }
-
-  const existing = fs.readFileSync(agentsPath, 'utf8');
-  if (managedRegex.test(existing)) {
-    const next = existing.replace(managedRegex, snippet);
-    if (next === existing) {
-      return { status: 'unchanged', file: 'AGENTS.md' };
-    }
-    if (!dryRun) {
-      fs.writeFileSync(agentsPath, next, 'utf8');
-    }
-    return { status: 'updated', file: 'AGENTS.md', note: 'refreshed gitguardex-managed block' };
-  }
-
-  if (existing.includes(AGENTS_MARKER_START)) {
-    return { status: 'unchanged', file: 'AGENTS.md', note: 'existing marker found without managed end marker' };
-  }
-
-  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-  if (!dryRun) {
-    fs.writeFileSync(agentsPath, `${existing}${separator}${snippet}\n`, 'utf8');
-  }
-
-  return { status: 'updated', file: 'AGENTS.md' };
-}
-
-function ensureManagedGitignore(repoRoot, dryRun) {
-  const gitignorePath = path.join(repoRoot, '.gitignore');
-  const managedBlock = [
-    GITIGNORE_MARKER_START,
-    ...MANAGED_GITIGNORE_PATHS,
-    GITIGNORE_MARKER_END,
-  ].join('\n');
-  const managedRegex = new RegExp(
-    `${GITIGNORE_MARKER_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?${GITIGNORE_MARKER_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
-    'm',
-  );
-
-  if (!fs.existsSync(gitignorePath)) {
-    if (!dryRun) {
-      fs.writeFileSync(gitignorePath, `${managedBlock}\n`, 'utf8');
-    }
-    return { status: 'created', file: '.gitignore', note: 'added gitguardex-managed entries' };
-  }
-
-  const existing = fs.readFileSync(gitignorePath, 'utf8');
-  if (managedRegex.test(existing)) {
-    const next = existing.replace(managedRegex, managedBlock);
-    if (next === existing) {
-      return { status: 'unchanged', file: '.gitignore' };
-    }
-    if (!dryRun) {
-      fs.writeFileSync(gitignorePath, next, 'utf8');
-    }
-    return { status: 'updated', file: '.gitignore', note: 'refreshed gitguardex-managed entries' };
-  }
-
-  const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-  if (!dryRun) {
-    fs.writeFileSync(gitignorePath, `${existing}${separator}${managedBlock}\n`, 'utf8');
-  }
-  return { status: 'updated', file: '.gitignore', note: 'appended gitguardex-managed entries' };
-}
-
-function stripJsonComments(source) {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const current = source[index];
-    const next = source[index + 1];
-
-    if (inLineComment) {
-      if (current === '\n' || current === '\r') {
-        inLineComment = false;
-        result += current;
-      }
-      continue;
-    }
-
-    if (inBlockComment) {
-      if (current === '*' && next === '/') {
-        inBlockComment = false;
-        index += 1;
-        continue;
-      }
-      if (current === '\n' || current === '\r') {
-        result += current;
-      }
-      continue;
-    }
-
-    if (inString) {
-      result += current;
-      if (escapeNext) {
-        escapeNext = false;
-      } else if (current === '\\') {
-        escapeNext = true;
-      } else if (current === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (current === '"') {
-      inString = true;
-      result += current;
-      continue;
-    }
-
-    if (current === '/' && next === '/') {
-      inLineComment = true;
-      index += 1;
-      continue;
-    }
-
-    if (current === '/' && next === '*') {
-      inBlockComment = true;
-      index += 1;
-      continue;
-    }
-
-    result += current;
-  }
-
-  return result;
-}
-
-function stripJsonTrailingCommas(source) {
-  let result = '';
-  let inString = false;
-  let escapeNext = false;
-
-  for (let index = 0; index < source.length; index += 1) {
-    const current = source[index];
-
-    if (inString) {
-      result += current;
-      if (escapeNext) {
-        escapeNext = false;
-      } else if (current === '\\') {
-        escapeNext = true;
-      } else if (current === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (current === '"') {
-      inString = true;
-      result += current;
-      continue;
-    }
-
-    if (current === ',') {
-      let lookahead = index + 1;
-      while (lookahead < source.length && /\s/.test(source[lookahead])) {
-        lookahead += 1;
-      }
-      if (source[lookahead] === '}' || source[lookahead] === ']') {
-        continue;
-      }
-    }
-
-    result += current;
-  }
-
-  return result;
-}
-
-function parseJsonObjectLikeFile(source, relativePath) {
-  let parsed;
-  try {
-    parsed = JSON.parse(stripJsonTrailingCommas(stripJsonComments(source)));
-  } catch (error) {
-    throw new Error(`Unable to parse ${relativePath} as JSON or JSONC: ${error.message}`);
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error(`${relativePath} must contain a top-level object.`);
-  }
-
-  return parsed;
-}
-
-function uniqueStringList(values) {
-  const seen = new Set();
-  const result = [];
-
-  for (const value of values) {
-    if (typeof value !== 'string' || seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    result.push(value);
-  }
-
-  return result;
-}
-
-function buildRepoVscodeSettings(existingSettings = {}) {
-  const nextSettings = { ...existingSettings };
-  const existingIgnoredFolders = Array.isArray(existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING])
-    ? existingSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING]
-    : [];
-
-  nextSettings[REPO_SCAN_IGNORED_FOLDERS_SETTING] = uniqueStringList([
-    ...existingIgnoredFolders,
-    ...MANAGED_REPO_SCAN_IGNORED_FOLDERS,
-  ]);
-
-  return nextSettings;
-}
-
-function ensureRepoVscodeSettings(repoRoot, dryRun) {
-  const settingsPath = path.join(repoRoot, SHARED_VSCODE_SETTINGS_RELATIVE);
-  const destinationExists = fs.existsSync(settingsPath);
-  const existingContent = destinationExists ? fs.readFileSync(settingsPath, 'utf8') : '';
-  const existingSettings = destinationExists
-    ? parseJsonObjectLikeFile(existingContent, SHARED_VSCODE_SETTINGS_RELATIVE)
-    : {};
-  const nextContent = `${JSON.stringify(buildRepoVscodeSettings(existingSettings), null, 2)}\n`;
-
-  if (destinationExists && existingContent === nextContent) {
-    return { status: 'unchanged', file: SHARED_VSCODE_SETTINGS_RELATIVE };
-  }
-
-  ensureParentDir(repoRoot, settingsPath, dryRun);
-  if (!dryRun) {
-    fs.writeFileSync(settingsPath, nextContent, 'utf8');
-  }
-
-  return {
-    status: destinationExists ? 'updated' : 'created',
-    file: SHARED_VSCODE_SETTINGS_RELATIVE,
-    note: 'shared VS Code repo scan ignores for Guardex worktrees',
-  };
-}
-
-function configureHooks(repoRoot, dryRun) {
-  if (dryRun) {
-    return { status: 'would-set', key: 'core.hooksPath', value: '.githooks' };
-  }
-
-  const result = run('git', ['-C', repoRoot, 'config', 'core.hooksPath', '.githooks']);
-  if (result.status !== 0) {
-    throw new Error(`Failed to set git hooksPath: ${(result.stderr || '').trim()}`);
-  }
-
-  return { status: 'set', key: 'core.hooksPath', value: '.githooks' };
-}
 
 function appendForceArgs(args, options) {
   if (!options.force) {
@@ -899,8 +255,28 @@ function shouldForceManagedPath(options, relativePath) {
   return normalized !== null && targetedPaths.includes(normalized);
 }
 
+function ensureTargetedLegacyWorkflowShims(repoRoot, options) {
+  const targetedPaths = Array.isArray(options.forceManagedPaths) ? options.forceManagedPaths : [];
+  if (targetedPaths.length === 0) {
+    return [];
+  }
+
+  const operations = [];
+  for (const shim of LEGACY_WORKFLOW_SHIM_SPECS) {
+    if (!shouldForceManagedPath(options, shim.relativePath)) {
+      continue;
+    }
+    operations.push(ensureGeneratedScriptShim(repoRoot, shim, { dryRun: options.dryRun, force: true }));
+  }
+  return operations;
+}
+
 function normalizeWorkspacePath(relativePath) {
   return String(relativePath || '.').replace(/\\/g, '/');
+}
+
+function isCommandAvailable(commandName) {
+  return run('which', [commandName]).status === 0;
 }
 
 function buildParentWorkspaceView(repoRoot) {
@@ -986,11 +362,42 @@ function protectedBaseWriteBlock(options, { requireBootstrap = true } = {}) {
 }
 
 function assertProtectedMainWriteAllowed(options, commandName) {
-  return getSandboxApi().assertProtectedMainWriteAllowed(options, commandName);
+  return sandboxModule.assertProtectedMainWriteAllowed(options, commandName);
 }
 
 function runSetupBootstrapInternal(options) {
-  return getSandboxApi().runSetupBootstrapInternal(options);
+  const installPayload = runInstallInternal(options);
+  installPayload.operations.push(
+    ensureSetupProtectedBranches(installPayload.repoRoot, Boolean(options.dryRun)),
+  );
+
+  let parentWorkspace = null;
+  if (options.parentWorkspaceView) {
+    installPayload.operations.push(
+      ensureParentWorkspaceView(installPayload.repoRoot, Boolean(options.dryRun)),
+    );
+    if (!options.dryRun) {
+      parentWorkspace = buildParentWorkspaceView(installPayload.repoRoot);
+    }
+  }
+
+  const fixPayload = runFixInternal({
+    target: installPayload.repoRoot,
+    dryRun: options.dryRun,
+    force: options.force,
+    forceManagedPaths: options.forceManagedPaths,
+    dropStaleLocks: true,
+    skipAgents: options.skipAgents,
+    skipPackageJson: options.skipPackageJson,
+    skipGitignore: options.skipGitignore,
+    allowProtectedBaseWrite: options.allowProtectedBaseWrite,
+  });
+
+  return {
+    installPayload,
+    fixPayload,
+    parentWorkspace,
+  };
 }
 
 function extractAgentBranchStartMetadata(output) {
@@ -1271,7 +678,7 @@ function runSetupInSandbox(options, blocked, repoLabel = '') {
 
   const scanResult = runScanInternal({ target: blocked.repoRoot, json: false });
   const currentBaseBranch = currentBranchName(scanResult.repoRoot);
-  const autoFinishSummary = autoFinishReadyAgentBranches(scanResult.repoRoot, {
+  const autoFinishSummary = doctorModule.autoFinishReadyAgentBranches(scanResult.repoRoot, {
     baseBranch: currentBaseBranch,
     dryRun: syncOptions.dryRun,
   });
@@ -1447,716 +854,12 @@ function parseBranchList(rawValue) {
     .filter(Boolean);
 }
 
-function uniquePreserveOrder(items) {
-  const seen = new Set();
-  const result = [];
-  for (const item of items) {
-    if (seen.has(item)) continue;
-    seen.add(item);
-    result.push(item);
-  }
-  return result;
-}
-
-function readConfiguredProtectedBranches(repoRoot) {
-  const result = gitRun(repoRoot, ['config', '--get', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
-  if (result.status !== 0) {
-    return null;
-  }
-  const parsed = uniquePreserveOrder(parseBranchList(result.stdout.trim()));
-  if (parsed.length === 0) {
-    return null;
-  }
-  return parsed;
-}
-
-function listLocalUserBranches(repoRoot) {
-  const result = gitRun(repoRoot, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'], { allowFailure: true });
-  const branchNames = result.status === 0
-    ? uniquePreserveOrder(
-      String(result.stdout || '')
-        .split('\n')
-        .map((item) => item.trim())
-        .filter(Boolean),
-    )
-    : [];
-
-  const additionalUserBranches = branchNames.filter(
-    (branchName) =>
-      !branchName.startsWith('agent/') &&
-      !DEFAULT_PROTECTED_BRANCHES.includes(branchName),
-  );
-  if (additionalUserBranches.length > 0) {
-    return additionalUserBranches;
-  }
-
-  const current = gitRun(repoRoot, ['branch', '--show-current'], { allowFailure: true });
-  if (current.status !== 0) {
-    return [];
-  }
-
-  const branchName = String(current.stdout || '').trim();
-  if (
-    !branchName ||
-    branchName.startsWith('agent/') ||
-    DEFAULT_PROTECTED_BRANCHES.includes(branchName)
-  ) {
-    return [];
-  }
-
-  return [branchName];
-}
-
-function listLocalAgentBranches(repoRoot) {
-  const result = gitRun(
-    repoRoot,
-    ['for-each-ref', '--format=%(refname:short)', 'refs/heads/agent/'],
-    { allowFailure: true },
-  );
-  if (result.status !== 0) {
-    return [];
-  }
-  return uniquePreserveOrder(
-    String(result.stdout || '')
-      .split('\n')
-      .map((item) => item.trim())
-      .filter(Boolean),
-  );
-}
-
-function mapWorktreePathsByBranch(repoRoot) {
-  const result = gitRun(repoRoot, ['worktree', 'list', '--porcelain'], { allowFailure: true });
-  const map = new Map();
-  if (result.status !== 0) {
-    return map;
-  }
-
-  const lines = String(result.stdout || '').split('\n');
-  let currentWorktree = '';
-  for (const line of lines) {
-    if (line.startsWith('worktree ')) {
-      currentWorktree = line.slice('worktree '.length).trim();
-      continue;
-    }
-    if (line.startsWith('branch refs/heads/')) {
-      const branchName = line.slice('branch refs/heads/'.length).trim();
-      if (currentWorktree && branchName) {
-        map.set(branchName, currentWorktree);
-      }
-    }
-  }
-  return map;
-}
-
-function hasSignificantWorkingTreeChanges(worktreePath) {
-  const result = run('git', [
-    '-C',
-    worktreePath,
-    'status',
-    '--porcelain',
-    '--untracked-files=normal',
-    '--',
-  ]);
-  if (result.status !== 0) {
-    return true;
-  }
-
-  const lines = String(result.stdout || '')
-    .split('\n')
-    .map((line) => line.trimEnd())
-    .filter((line) => line.length > 0);
-
-  for (const line of lines) {
-    const pathPart = (line.length > 3 ? line.slice(3) : '').trim();
-    if (!pathPart) continue;
-    if (pathPart === LOCK_FILE_RELATIVE) continue;
-    if (pathPart.startsWith(`${LOCK_FILE_RELATIVE} -> `)) continue;
-    if (pathPart.endsWith(` -> ${LOCK_FILE_RELATIVE}`)) continue;
-    return true;
-  }
-  return false;
-}
-
 function originRemoteLooksLikeGithub(repoRoot) {
   const originUrl = readGitConfig(repoRoot, 'remote.origin.url');
   if (!originUrl) {
     return false;
   }
   return /github\.com[:/]/i.test(originUrl);
-}
-
-function autoFinishReadyAgentBranches(repoRoot, options = {}) {
-  const baseBranch = String(options.baseBranch || '').trim();
-  const dryRun = Boolean(options.dryRun);
-  const waitForMerge = options.waitForMerge !== false;
-  const excludedBranches = new Set(
-    Array.isArray(options.excludeBranches)
-      ? options.excludeBranches.map((branch) => String(branch || '').trim()).filter(Boolean)
-      : [],
-  );
-
-  const summary = {
-    enabled: true,
-    baseBranch,
-    attempted: 0,
-    completed: 0,
-    skipped: 0,
-    failed: 0,
-    details: [],
-  };
-
-  if (!baseBranch || baseBranch === 'HEAD' || baseBranch.startsWith('agent/')) {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep (base branch is missing or not a non-agent local branch).');
-    return summary;
-  }
-
-  if (String(process.env.GUARDEX_DOCTOR_SANDBOX || '') === '1') {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep inside doctor sandbox pass.');
-    return summary;
-  }
-
-  if (String(process.env.GUARDEX_SKIP_AUTO_FINISH_READY_BRANCHES || '') === '1') {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep (GUARDEX_SKIP_AUTO_FINISH_READY_BRANCHES=1).');
-    return summary;
-  }
-
-  if (dryRun) {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep in dry-run mode.');
-    return summary;
-  }
-
-  const hasOrigin = gitRun(repoRoot, ['remote', 'get-url', 'origin'], { allowFailure: true }).status === 0;
-  if (!hasOrigin) {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep (origin remote missing).');
-    return summary;
-  }
-  const explicitGhBin = Boolean(String(process.env.GUARDEX_GH_BIN || '').trim());
-  if (!explicitGhBin && !originRemoteLooksLikeGithub(repoRoot)) {
-    summary.enabled = false;
-    summary.details.push('Skipped auto-finish sweep (origin remote is not GitHub).');
-    return summary;
-  }
-
-  const ghBin = process.env.GUARDEX_GH_BIN || 'gh';
-  if (run(ghBin, ['--version']).status !== 0) {
-    summary.enabled = false;
-    summary.details.push(`Skipped auto-finish sweep (${ghBin} not available).`);
-    return summary;
-  }
-
-  const branchWorktrees = mapWorktreePathsByBranch(repoRoot);
-  const agentBranches = listLocalAgentBranches(repoRoot);
-  if (agentBranches.length === 0) {
-    summary.enabled = false;
-    summary.details.push('No local agent branches found for auto-finish sweep.');
-    return summary;
-  }
-
-  for (const branch of agentBranches) {
-    if (excludedBranches.has(branch)) {
-      summary.skipped += 1;
-      summary.details.push(`[skip] ${branch}: excluded from this auto-finish sweep.`);
-      continue;
-    }
-
-    if (branch === baseBranch) {
-      summary.skipped += 1;
-      summary.details.push(`[skip] ${branch}: source branch equals base branch.`);
-      continue;
-    }
-
-    let counts;
-    try {
-      counts = aheadBehind(repoRoot, branch, baseBranch);
-    } catch (error) {
-      summary.failed += 1;
-      summary.details.push(`[fail] ${branch}: unable to compute ahead/behind (${error.message}).`);
-      continue;
-    }
-
-    if (counts.ahead <= 0) {
-      summary.skipped += 1;
-      summary.details.push(`[skip] ${branch}: already merged into ${baseBranch}.`);
-      continue;
-    }
-
-    const branchWorktree = branchWorktrees.get(branch) || '';
-    if (branchWorktree && hasSignificantWorkingTreeChanges(branchWorktree)) {
-      summary.skipped += 1;
-      summary.details.push(`[skip] ${branch}: dirty worktree (${branchWorktree}).`);
-      continue;
-    }
-
-    summary.attempted += 1;
-    const finishArgs = [
-      '--branch',
-      branch,
-      '--base',
-      baseBranch,
-      '--via-pr',
-      waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
-      '--cleanup',
-    ];
-    const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot });
-    const combinedOutput = [finishResult.stdout || '', finishResult.stderr || ''].join('\n').trim();
-
-    if (finishResult.status === 0) {
-      summary.completed += 1;
-      summary.details.push(`[done] ${branch}: auto-finish completed.`);
-      continue;
-    }
-
-    const recoverableConflict = detectRecoverableAutoFinishConflict(combinedOutput);
-    if (recoverableConflict) {
-      summary.skipped += 1;
-      const tail = combinedOutput ? ` ${combinedOutput.split('\n').slice(-2).join(' | ')}` : '';
-      summary.details.push(`[skip] ${branch}: ${recoverableConflict.rawLabel}${tail}`);
-      continue;
-    }
-
-    summary.failed += 1;
-    const tail = combinedOutput ? ` ${combinedOutput.split('\n').slice(-2).join(' | ')}` : '';
-    summary.details.push(`[fail] ${branch}: auto-finish failed.${tail}`);
-  }
-
-  return summary;
-}
-
-function ensureSetupProtectedBranches(repoRoot, dryRun) {
-  const localUserBranches = listLocalUserBranches(repoRoot);
-  if (localUserBranches.length === 0) {
-    return {
-      status: 'unchanged',
-      file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
-      note: 'no additional local user branches detected',
-    };
-  }
-
-  const configured = readConfiguredProtectedBranches(repoRoot);
-  const currentBranches = configured || [...DEFAULT_PROTECTED_BRANCHES];
-  const missingBranches = localUserBranches.filter((branchName) => !currentBranches.includes(branchName));
-  if (missingBranches.length === 0) {
-    return {
-      status: 'unchanged',
-      file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
-      note: 'local user branches already protected',
-    };
-  }
-
-  const nextBranches = uniquePreserveOrder([...currentBranches, ...missingBranches]);
-  if (!dryRun) {
-    writeProtectedBranches(repoRoot, nextBranches);
-  }
-
-  return {
-    status: dryRun ? 'would-update' : 'updated',
-    file: `git config ${GIT_PROTECTED_BRANCHES_KEY}`,
-    note: `added local user branch(es): ${missingBranches.join(', ')}`,
-  };
-}
-
-function readProtectedBranches(repoRoot) {
-  const result = gitRun(repoRoot, ['config', '--get', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
-  if (result.status !== 0) {
-    return [...DEFAULT_PROTECTED_BRANCHES];
-  }
-
-  const parsed = uniquePreserveOrder(parseBranchList(result.stdout.trim()));
-  if (parsed.length === 0) {
-    return [...DEFAULT_PROTECTED_BRANCHES];
-  }
-  return parsed;
-}
-
-function writeProtectedBranches(repoRoot, branches) {
-  if (branches.length === 0) {
-    gitRun(repoRoot, ['config', '--unset-all', GIT_PROTECTED_BRANCHES_KEY], { allowFailure: true });
-    return;
-  }
-  gitRun(repoRoot, ['config', GIT_PROTECTED_BRANCHES_KEY, branches.join(' ')]);
-}
-
-function resolveBaseBranch(repoRoot, explicitBase) {
-  if (explicitBase) {
-    return explicitBase;
-  }
-  const configured = readGitConfig(repoRoot, GIT_BASE_BRANCH_KEY);
-  return configured || DEFAULT_BASE_BRANCH;
-}
-
-function resolveSyncStrategy(repoRoot, explicitStrategy) {
-  const strategy = (explicitStrategy || readGitConfig(repoRoot, GIT_SYNC_STRATEGY_KEY) || DEFAULT_SYNC_STRATEGY)
-    .trim()
-    .toLowerCase();
-  if (strategy !== 'rebase' && strategy !== 'merge') {
-    throw new Error(`Invalid sync strategy '${strategy}' (expected: rebase or merge)`);
-  }
-  return strategy;
-}
-
-function repoHasHeadCommit(repoRoot) {
-  return gitRun(repoRoot, ['rev-parse', '--verify', 'HEAD'], { allowFailure: true }).status === 0;
-}
-
-function readBranchDisplayName(repoRoot) {
-  const symbolic = gitRun(repoRoot, ['symbolic-ref', '--quiet', '--short', 'HEAD'], { allowFailure: true });
-  if (symbolic.status === 0) {
-    const branch = String(symbolic.stdout || '').trim();
-    if (!branch) {
-      return '(unknown)';
-    }
-    return repoHasHeadCommit(repoRoot) ? branch : `${branch} (unborn; no commits yet)`;
-  }
-
-  const detached = gitRun(repoRoot, ['rev-parse', '--short', 'HEAD'], { allowFailure: true });
-  if (detached.status === 0) {
-    return `(detached at ${String(detached.stdout || '').trim()})`;
-  }
-  return '(unknown)';
-}
-
-function repoHasOriginRemote(repoRoot) {
-  return gitRun(repoRoot, ['remote', 'get-url', 'origin'], { allowFailure: true }).status === 0;
-}
-
-function detectComposeHintFiles(repoRoot) {
-  return COMPOSE_HINT_FILES.filter((relativePath) => fs.existsSync(path.join(repoRoot, relativePath)));
-}
-
-function printSetupRepoHints(repoRoot, baseBranch, repoLabel = '') {
-  const branchDisplay = readBranchDisplayName(repoRoot);
-  const hasHeadCommit = repoHasHeadCommit(repoRoot);
-  const hasOrigin = repoHasOriginRemote(repoRoot);
-  const composeFiles = detectComposeHintFiles(repoRoot);
-  if (hasHeadCommit && hasOrigin && composeFiles.length === 0) {
-    return;
-  }
-
-  const label = repoLabel ? ` ${repoLabel}` : '';
-  if (!hasHeadCommit) {
-    console.log(`[${TOOL_NAME}] Fresh repo onboarding${label}: current branch is ${branchDisplay}.`);
-    console.log(`[${TOOL_NAME}] Bootstrap commit${label}: git add . && git commit -m "bootstrap gitguardex"`);
-    console.log(
-      `[${TOOL_NAME}] First agent flow${label}: ` +
-      `gx branch start "<task>" "codex" -> ` +
-      `gx locks claim --branch "$(git branch --show-current)" <file...> -> ` +
-      `gx branch finish --branch "$(git branch --show-current)" --base ${baseBranch} --via-pr --wait-for-merge`,
-    );
-  }
-  if (!hasOrigin) {
-    console.log(`[${TOOL_NAME}] No origin remote${label}: finish and auto-merge flows stay local until you add one.`);
-  }
-  if (composeFiles.length > 0) {
-    console.log(
-      `[${TOOL_NAME}] Docker Compose helper${label}: detected ${composeFiles.join(', ')}. ` +
-      `Set GUARDEX_DOCKER_SERVICE and run 'bash scripts/guardex-docker-loader.sh -- <command...>'.`,
-    );
-  }
-}
-
-function ensureOriginBaseRef(repoRoot, baseBranch) {
-  const fetch = gitRun(repoRoot, ['fetch', 'origin', baseBranch, '--quiet'], { allowFailure: true });
-  if (fetch.status !== 0) {
-    throw new Error(
-      `Unable to fetch origin/${baseBranch}. Ensure remote 'origin' exists and branch '${baseBranch}' is available.`,
-    );
-  }
-  const hasRemoteBase = gitRun(repoRoot, ['show-ref', '--verify', '--quiet', `refs/remotes/origin/${baseBranch}`], {
-    allowFailure: true,
-  });
-  if (hasRemoteBase.status !== 0) {
-    throw new Error(`Remote base branch not found: origin/${baseBranch}`);
-  }
-}
-
-function lockRegistryStatus(repoRoot) {
-  const result = gitRun(repoRoot, ['status', '--porcelain', '--', LOCK_FILE_RELATIVE], { allowFailure: true });
-  if (result.status !== 0) {
-    return { dirty: false, untracked: false };
-  }
-  const lines = (result.stdout || '').split('\n').filter((line) => line.length > 0);
-  if (lines.length === 0) {
-    return { dirty: false, untracked: false };
-  }
-  const untracked = lines.some((line) => line.startsWith('??'));
-  return { dirty: true, untracked };
-}
-
-
-function listAgentWorktrees(repoRoot) {
-  const result = gitRun(repoRoot, ['worktree', 'list', '--porcelain'], { allowFailure: true });
-  if (result.status !== 0) {
-    throw new Error('Unable to list git worktrees for finish command');
-  }
-
-  const entries = [];
-  let currentPath = '';
-  let currentBranchRef = '';
-  const lines = String(result.stdout || '').split('\n');
-  for (const line of lines) {
-    if (!line.trim()) {
-      if (currentPath && currentBranchRef.startsWith('refs/heads/agent/')) {
-        entries.push({
-          worktreePath: currentPath,
-          branch: currentBranchRef.replace(/^refs\/heads\//, ''),
-        });
-      }
-      currentPath = '';
-      currentBranchRef = '';
-      continue;
-    }
-    if (line.startsWith('worktree ')) {
-      currentPath = line.slice('worktree '.length).trim();
-      continue;
-    }
-    if (line.startsWith('branch ')) {
-      currentBranchRef = line.slice('branch '.length).trim();
-      continue;
-    }
-  }
-  if (currentPath && currentBranchRef.startsWith('refs/heads/agent/')) {
-    entries.push({
-      worktreePath: currentPath,
-      branch: currentBranchRef.replace(/^refs\/heads\//, ''),
-    });
-  }
-
-  return entries;
-}
-
-function listLocalAgentBranchesForFinish(repoRoot) {
-  const result = gitRun(
-    repoRoot,
-    ['for-each-ref', '--format=%(refname:short)', 'refs/heads/agent/'],
-    { allowFailure: true },
-  );
-  if (result.status !== 0) {
-    throw new Error('Unable to list local agent branches');
-  }
-  return uniquePreserveOrder(
-    String(result.stdout || '')
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('agent/')),
-  );
-}
-
-function gitQuietChangeResult(worktreePath, args) {
-  const result = run('git', ['-C', worktreePath, ...args], { stdio: 'pipe' });
-  if (result.status === 0) {
-    return false;
-  }
-  if (result.status === 1) {
-    return true;
-  }
-  throw new Error(
-    `git ${args.join(' ')} failed in ${worktreePath}: ${(
-      result.stderr || result.stdout || ''
-    ).trim()}`,
-  );
-}
-
-function worktreeHasLocalChanges(worktreePath) {
-  const hasUnstaged = gitQuietChangeResult(worktreePath, [
-    'diff',
-    '--quiet',
-    '--',
-    '.',
-    ':(exclude).omx/state/agent-file-locks.json',
-  ]);
-  if (hasUnstaged) {
-    return true;
-  }
-
-  const hasStaged = gitQuietChangeResult(worktreePath, [
-    'diff',
-    '--cached',
-    '--quiet',
-    '--',
-    '.',
-    ':(exclude).omx/state/agent-file-locks.json',
-  ]);
-  if (hasStaged) {
-    return true;
-  }
-
-  const untracked = run('git', ['-C', worktreePath, 'ls-files', '--others', '--exclude-standard'], {
-    stdio: 'pipe',
-  });
-  if (untracked.status !== 0) {
-    throw new Error(`Unable to inspect untracked files in ${worktreePath}`);
-  }
-  return String(untracked.stdout || '').trim().length > 0;
-}
-
-function gitOutputLines(worktreePath, args) {
-  const result = run('git', ['-C', worktreePath, ...args], { stdio: 'pipe' });
-  if (result.status !== 0) {
-    throw new Error(
-      `git ${args.join(' ')} failed in ${worktreePath}: ${(
-        result.stderr || result.stdout || ''
-      ).trim()}`,
-    );
-  }
-  return String(result.stdout || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function claimLocksForAutoCommit(repoRoot, worktreePath, branch) {
-  const changedFiles = uniquePreserveOrder([
-    ...gitOutputLines(worktreePath, ['diff', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
-    ...gitOutputLines(worktreePath, ['diff', '--cached', '--name-only', '--', '.', ':(exclude).omx/state/agent-file-locks.json']),
-    ...gitOutputLines(worktreePath, ['ls-files', '--others', '--exclude-standard']),
-  ]);
-
-  if (changedFiles.length > 0) {
-    const claim = runPackageAsset('lockTool', ['claim', '--branch', branch, ...changedFiles], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
-    if (claim.status !== 0) {
-      throw new Error(
-        `Lock claim failed for ${branch}: ${(
-          claim.stderr || claim.stdout || ''
-        ).trim()}`,
-      );
-    }
-  }
-
-  const deletedFiles = uniquePreserveOrder([
-    ...gitOutputLines(worktreePath, [
-      'diff',
-      '--name-only',
-      '--diff-filter=D',
-      '--',
-      '.',
-      ':(exclude).omx/state/agent-file-locks.json',
-    ]),
-    ...gitOutputLines(worktreePath, [
-      'diff',
-      '--cached',
-      '--name-only',
-      '--diff-filter=D',
-      '--',
-      '.',
-      ':(exclude).omx/state/agent-file-locks.json',
-    ]),
-  ]);
-
-  if (deletedFiles.length > 0) {
-    const allowDelete = runPackageAsset('lockTool', ['allow-delete', '--branch', branch, ...deletedFiles], {
-      cwd: repoRoot,
-      stdio: 'pipe',
-    });
-    if (allowDelete.status !== 0) {
-      throw new Error(
-        `Delete-lock grant failed for ${branch}: ${(
-          allowDelete.stderr || allowDelete.stdout || ''
-        ).trim()}`,
-      );
-    }
-  }
-}
-
-function resolveFinishBaseBranch(repoRoot, _sourceBranch, explicitBase) {
-  if (explicitBase) {
-    return explicitBase;
-  }
-
-  const configured = readGitConfig(repoRoot, GIT_BASE_BRANCH_KEY);
-  if (configured) {
-    return configured;
-  }
-
-  return DEFAULT_BASE_BRANCH;
-}
-
-function autoCommitWorktreeForFinish(repoRoot, worktreePath, branch, options) {
-  const hasChanges = worktreeHasLocalChanges(worktreePath);
-  if (!hasChanges) {
-    return { changed: false, committed: false };
-  }
-
-  if (options.noAutoCommit) {
-    throw new Error(
-      `Branch '${branch}' has local changes in ${worktreePath}. Re-run without --no-auto-commit or commit manually first.`,
-    );
-  }
-
-  if (options.dryRun) {
-    return { changed: true, committed: false, dryRun: true };
-  }
-
-  claimLocksForAutoCommit(repoRoot, worktreePath, branch);
-
-  const addResult = run('git', ['-C', worktreePath, 'add', '-A'], { stdio: 'pipe' });
-  if (addResult.status !== 0) {
-    throw new Error(`git add failed in ${worktreePath}: ${(addResult.stderr || addResult.stdout || '').trim()}`);
-  }
-
-  const stagedHasChanges = gitQuietChangeResult(worktreePath, [
-    'diff',
-    '--cached',
-    '--quiet',
-    '--',
-    '.',
-    ':(exclude).omx/state/agent-file-locks.json',
-  ]);
-  if (!stagedHasChanges) {
-    return { changed: true, committed: false };
-  }
-
-  const commitMessage = options.commitMessage || `Auto-finish: ${branch}`;
-  const commitResult = run('git', ['-C', worktreePath, 'commit', '-m', commitMessage], { stdio: 'pipe' });
-  if (commitResult.status !== 0) {
-    throw new Error(
-      `Auto-commit failed on '${branch}': ${(
-        commitResult.stderr || commitResult.stdout || ''
-      ).trim()}`,
-    );
-  }
-
-  return { changed: true, committed: true, message: commitMessage };
-}
-
-function syncOperation(repoRoot, strategy, baseRef, ffOnly) {
-  if (strategy === 'rebase') {
-    if (ffOnly) {
-      throw new Error('--ff-only is only supported with --strategy merge');
-    }
-    const rebased = run('git', ['-C', repoRoot, 'rebase', baseRef], { stdio: 'pipe' });
-    if (rebased.status !== 0) {
-      const details = (rebased.stderr || rebased.stdout || '').trim();
-      const gitDir = path.join(repoRoot, '.git');
-      const rebaseActive = fs.existsSync(path.join(gitDir, 'rebase-merge')) || fs.existsSync(path.join(gitDir, 'rebase-apply'));
-      const help = rebaseActive
-        ? '\nResolve conflicts, then run: git rebase --continue\nOr abort: git rebase --abort'
-        : '';
-      throw new Error(`Sync failed during rebase onto ${baseRef}.${details ? `\n${details}` : ''}${help}`);
-    }
-    return;
-  }
-
-  const mergeArgs = ['-C', repoRoot, 'merge', '--no-edit'];
-  if (ffOnly) {
-    mergeArgs.push('--ff-only');
-  }
-  mergeArgs.push(baseRef);
-  const merged = run('git', mergeArgs, { stdio: 'pipe' });
-  if (merged.status !== 0) {
-    const details = (merged.stderr || merged.stdout || '').trim();
-    const gitDir = path.join(repoRoot, '.git');
-    const mergeActive = fs.existsSync(path.join(gitDir, 'MERGE_HEAD'));
-    const help = mergeActive ? '\nResolve conflicts, then run: git commit\nOr abort: git merge --abort' : '';
-    throw new Error(`Sync failed during merge from ${baseRef}.${details ? `\n${details}` : ''}${help}`);
-  }
 }
 
 function isInteractiveTerminal() {
@@ -2364,7 +1067,7 @@ function printUpdateAvailableBanner(current, latest) {
 }
 
 function maybeSelfUpdateBeforeStatus() {
-  return getToolchainApi().maybeSelfUpdateBeforeStatus();
+  return toolchainModule.maybeSelfUpdateBeforeStatus();
 }
 
 function readInstalledGuardexVersion() {
@@ -2499,7 +1202,7 @@ function printOpenSpecUpdateAvailableBanner(current, latest) {
 }
 
 function maybeOpenSpecUpdateBeforeStatus() {
-  return getToolchainApi().maybeOpenSpecUpdateBeforeStatus();
+  return toolchainModule.maybeOpenSpecUpdateBeforeStatus();
 }
 
 function promptYesNoStrict(question) {
@@ -2678,7 +1381,7 @@ function askGlobalInstallForMissing(options, missingPackages, missingLocalTools)
 }
 
 function installGlobalToolchain(options) {
-  return getToolchainApi().installGlobalToolchain(options);
+  return toolchainModule.installGlobalToolchain(options);
 }
 
 function findStaleLockPaths(repoRoot, locks) {
@@ -3038,9 +1741,9 @@ function status(rawArgs) {
     json: false,
   });
 
-  const toolchain = detectGlobalToolchainPackages();
+  const toolchain = toolchainModule.detectGlobalToolchainPackages();
   const npmServices = GLOBAL_TOOLCHAIN_PACKAGES.map((pkg) => {
-    const service = getGlobalToolchainService(pkg);
+    const service = toolchainModule.getGlobalToolchainService(pkg);
     if (!toolchain.ok) {
       return {
         name: service.name,
@@ -3058,12 +1761,12 @@ function status(rawArgs) {
       status: toolchain.installed.includes(pkg) ? 'active' : 'inactive',
     };
   });
-  const localCompanionServices = detectOptionalLocalCompanionTools().map((tool) => ({
+  const localCompanionServices = toolchainModule.detectOptionalLocalCompanionTools().map((tool) => ({
     name: tool.name,
     displayName: tool.displayName || tool.name,
     status: tool.status,
   }));
-  const requiredSystemTools = detectRequiredSystemTools();
+  const requiredSystemTools = toolchainModule.detectRequiredSystemTools();
   const services = [
     ...npmServices,
     ...localCompanionServices,
@@ -3132,7 +1835,7 @@ function status(rawArgs) {
     console.log(
       `[${TOOL_NAME}] Optional companion tools inactive: ${inactiveOptionalCompanions.join(', ')}`,
     );
-    for (const warning of describeMissingGlobalDependencyWarnings(
+    for (const warning of toolchainModule.describeMissingGlobalDependencyWarnings(
       npmServices
         .filter((service) => service.status === 'inactive')
         .map((service) => service.packageName),
@@ -3394,7 +2097,7 @@ function doctor(rawArgs) {
       cleanupProtectedBaseSandbox,
       ensureOmxScaffold,
       configureHooks,
-      autoFinishReadyAgentBranches,
+      autoFinishReadyAgentBranches: doctorModule.autoFinishReadyAgentBranches,
     });
     return;
   }
@@ -3412,7 +2115,7 @@ function doctor(rawArgs) {
       failed: 0,
       details: [],
     }
-    : autoFinishReadyAgentBranches(scanResult.repoRoot, {
+    : doctorModule.autoFinishReadyAgentBranches(scanResult.repoRoot, {
       baseBranch: currentBaseBranch,
       dryRun: singleRepoOptions.dryRun,
       waitForMerge: singleRepoOptions.waitForMerge,
@@ -3868,7 +2571,7 @@ function setup(rawArgs) {
     allowProtectedBaseWrite: false,
   });
 
-  const globalInstallStatus = installGlobalToolchain(options);
+  const globalInstallStatus = toolchainModule.installGlobalToolchain(options);
   if (globalInstallStatus.status === 'installed') {
     console.log(
       `[${TOOL_NAME}] ✅ Companion tools installed (${(globalInstallStatus.packages || []).join(', ')}).`,
@@ -3876,7 +2579,7 @@ function setup(rawArgs) {
   } else if (globalInstallStatus.status === 'already-installed') {
     console.log(`[${TOOL_NAME}] ✅ Companion tools already installed. Skipping.`);
   } else if (globalInstallStatus.status === 'failed') {
-    const installCommands = describeCompanionInstallCommands(
+    const installCommands = toolchainModule.describeCompanionInstallCommands(
       GLOBAL_TOOLCHAIN_PACKAGES,
       OPTIONAL_LOCAL_COMPANION_TOOLS,
     );
@@ -3892,13 +2595,13 @@ function setup(rawArgs) {
     );
   } else if (globalInstallStatus.status === 'skipped') {
     console.log(`[${TOOL_NAME}] ⚠️ Companion installs skipped by user choice.`);
-    for (const warning of describeMissingGlobalDependencyWarnings(
+    for (const warning of toolchainModule.describeMissingGlobalDependencyWarnings(
       globalInstallStatus.missingPackages || [],
     )) {
       console.log(`[${TOOL_NAME}] ⚠️ ${warning}`);
     }
   }
-  const requiredSystemTools = detectRequiredSystemTools();
+  const requiredSystemTools = toolchainModule.detectRequiredSystemTools();
   const missingSystemTools = requiredSystemTools.filter((tool) => tool.status !== 'active');
   if (missingSystemTools.length === 0) {
     console.log(`[${TOOL_NAME}] ✅ Required system tools available (${requiredSystemTools.map((tool) => tool.name).join(', ')}).`);
@@ -3966,7 +2669,7 @@ function setup(rawArgs) {
 
     const scanResult = runScanInternal({ target: repoPath, json: false });
     const currentBaseBranch = currentBranchName(scanResult.repoRoot);
-    const autoFinishSummary = autoFinishReadyAgentBranches(scanResult.repoRoot, {
+    const autoFinishSummary = doctorModule.autoFinishReadyAgentBranches(scanResult.repoRoot, {
       baseBranch: currentBaseBranch,
       dryRun: perRepoOptions.dryRun,
     });
@@ -4471,19 +3174,19 @@ function migrate(rawArgs) {
 }
 
 function cleanup(rawArgs) {
-  return getFinishApi().cleanup(rawArgs);
+  return finishCommands.cleanup(rawArgs);
 }
 
 function merge(rawArgs) {
-  return getFinishApi().merge(rawArgs);
+  return finishCommands.merge(rawArgs);
 }
 
 function finish(rawArgs, defaults = {}) {
-  return getFinishApi().finish(rawArgs, defaults);
+  return finishCommands.finish(rawArgs, defaults);
 }
 
 function sync(rawArgs) {
-  return getFinishApi().sync(rawArgs);
+  return finishCommands.sync(rawArgs);
 }
 
 function protect(rawArgs) {
@@ -4568,8 +3271,8 @@ function main() {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {
-    maybeSelfUpdateBeforeStatus();
-    maybeOpenSpecUpdateBeforeStatus();
+    toolchainModule.maybeSelfUpdateBeforeStatus();
+    toolchainModule.maybeOpenSpecUpdateBeforeStatus();
     status([]);
     return;
   }
@@ -4583,7 +3286,7 @@ function main() {
   }
 
   if (command === '--version' || command === '-v' || command === 'version') {
-    maybeSelfUpdateBeforeStatus();
+    toolchainModule.maybeSelfUpdateBeforeStatus();
     console.log(packageJson.version);
     return;
   }

@@ -3,16 +3,54 @@ const {
   path,
   TOOL_NAME,
   SHORT_TOOL_NAME,
-  CLI_ENTRY_PATH,
   LOCK_FILE_RELATIVE,
   REQUIRED_MANAGED_REPO_FILES,
-  AGENT_WORKTREE_RELATIVE_DIRS,
   OMX_SCAFFOLD_DIRECTORIES,
   OMX_SCAFFOLD_FILES,
+  AGENT_WORKTREE_RELATIVE_DIRS,
+  defaultAgentWorktreeRelativeDir,
 } = require('../context');
 const { run, runPackageAsset } = require('../core/runtime');
-const { readGitConfig, ensureRepoBranch } = require('../git');
-const { printAutoFinishSummary } = require('../output');
+const {
+  currentBranchName,
+  gitRefExists,
+  readGitConfig,
+  ensureRepoBranch,
+  hasOriginRemote,
+  aheadBehind,
+  mapWorktreePathsByBranch,
+  hasSignificantWorkingTreeChanges,
+  listLocalAgentBranches,
+} = require('../git');
+const {
+  extractAgentBranchStartMetadata,
+  resolveSandboxTarget,
+  isSpawnFailure,
+  startProtectedBaseSandbox,
+  cleanupProtectedBaseSandbox,
+} = require('../sandbox');
+const { ensureOmxScaffold, configureHooks } = require('../scaffold');
+const { detectRecoverableAutoFinishConflict, printAutoFinishSummary } = require('../output');
+
+/**
+ * @typedef {Object} SandboxMetadata
+ * @property {string} branch
+ * @property {string} worktreePath
+ */
+
+/**
+ * @typedef {Object} OperationResult
+ * @property {string} status
+ * @property {string} [note]
+ * @property {string} [stdout]
+ * @property {string} [stderr]
+ * @property {string} [prUrl]
+ * @property {string[]} [stagedFiles]
+ * @property {string} [commitMessage]
+ * @property {OperationResult[]} [operations]
+ * @property {OperationResult} [cleanup]
+ * @property {OperationResult} [hookRefresh]
+ */
 
 /**
  * @typedef {Object} AutoFinishSummary
@@ -23,26 +61,6 @@ const { printAutoFinishSummary } = require('../output');
  * @property {number} [failed]
  * @property {string[]} [details]
  * @property {string} [baseBranch]
- */
-
-/**
- * @typedef {Object} OperationResult
- * @property {string} status
- * @property {string} note
- * @property {string} [stdout]
- * @property {string} [stderr]
- * @property {string} [prUrl]
- * @property {string[]} [stagedFiles]
- * @property {string} [commitMessage]
- * @property {unknown[]} [operations]
- * @property {OperationResult} [cleanup]
- * @property {OperationResult} [hookRefresh]
- */
-
-/**
- * @typedef {Object} SandboxMetadata
- * @property {string} branch
- * @property {string} worktreePath
  */
 
 /**
@@ -69,39 +87,15 @@ const { printAutoFinishSummary } = require('../output');
  * @property {string | null} sandboxLockContent
  */
 
-function requireDoctorIntegration(name, value) {
-  if (typeof value !== 'function') {
-    throw new Error(`doctor integration missing: ${name}`);
-  }
-  return value;
-}
-
-function appendForceArgs(args, options) {
-  if (!options.force) {
-    return;
-  }
-  args.push('--force');
-  if (Array.isArray(options.forceManagedPaths) && options.forceManagedPaths.length > 0) {
-    args.push(...options.forceManagedPaths);
-  }
-}
-
-function resolveSandboxTarget(repoRoot, worktreePath, targetPath) {
-  const resolvedTarget = path.resolve(targetPath);
-  const relativeTarget = path.relative(repoRoot, resolvedTarget);
-  if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
-    throw new Error(`sandbox target must stay inside repo root: ${resolvedTarget}`);
-  }
-  if (!relativeTarget || relativeTarget === '.') {
-    return worktreePath;
-  }
-  return path.join(worktreePath, relativeTarget);
-}
-
 function buildSandboxDoctorArgs(options, sandboxTarget) {
   const args = ['doctor', '--target', sandboxTarget];
   if (options.dryRun) args.push('--dry-run');
-  appendForceArgs(args, options);
+  if (options.force) {
+    args.push('--force');
+    for (const managedPath of options.forceManagedPaths || []) {
+      args.push(managedPath);
+    }
+  }
   if (options.skipAgents) args.push('--skip-agents');
   if (options.skipPackageJson) args.push('--skip-package-json');
   if (options.skipGitignore) args.push('--no-gitignore');
@@ -112,8 +106,16 @@ function buildSandboxDoctorArgs(options, sandboxTarget) {
   return args;
 }
 
-function isSpawnFailure(result) {
-  return Boolean(result?.error) && typeof result?.status !== 'number';
+function originRemoteLooksLikeGithub(repoRoot) {
+  const originUrl = readGitConfig(repoRoot, 'remote.origin.url');
+  if (!originUrl) {
+    return false;
+  }
+  return /github\.com[:/]/i.test(originUrl);
+}
+
+function isCommandAvailable(commandName) {
+  return run('which', [commandName]).status === 0;
 }
 
 function parseGitPathList(output) {
@@ -123,8 +125,13 @@ function parseGitPathList(output) {
     .filter((line) => line && line !== LOCK_FILE_RELATIVE);
 }
 
-function collectWorktreePaths(worktreePath, commands) {
+function collectDoctorChangedPaths(worktreePath) {
   const changed = new Set();
+  const commands = [
+    ['diff', '--name-only'],
+    ['diff', '--cached', '--name-only'],
+    ['ls-files', '--others', '--exclude-standard'],
+  ];
   for (const gitArgs of commands) {
     const result = run('git', ['-C', worktreePath, ...gitArgs], { timeout: 20_000 });
     for (const filePath of parseGitPathList(result.stdout)) {
@@ -134,27 +141,35 @@ function collectWorktreePaths(worktreePath, commands) {
   return Array.from(changed);
 }
 
-function collectDoctorChangedPaths(worktreePath) {
-  return collectWorktreePaths(worktreePath, [
-    ['diff', '--name-only'],
-    ['diff', '--cached', '--name-only'],
-    ['ls-files', '--others', '--exclude-standard'],
-  ]);
-}
-
 function collectDoctorDeletedPaths(worktreePath) {
-  return collectWorktreePaths(worktreePath, [
+  const deleted = new Set();
+  const commands = [
     ['diff', '--name-only', '--diff-filter=D'],
     ['diff', '--cached', '--name-only', '--diff-filter=D'],
-  ]);
+  ];
+  for (const gitArgs of commands) {
+    const result = run('git', ['-C', worktreePath, ...gitArgs], { timeout: 20_000 });
+    for (const filePath of parseGitPathList(result.stdout)) {
+      deleted.add(filePath);
+    }
+  }
+  return Array.from(deleted);
 }
 
 function collectWorktreeDirtyPaths(worktreePath) {
-  return collectWorktreePaths(worktreePath, [
+  const dirty = new Set();
+  const commands = [
     ['diff', '--name-only'],
     ['diff', '--cached', '--name-only'],
     ['ls-files', '--others', '--exclude-standard'],
-  ]);
+  ];
+  for (const gitArgs of commands) {
+    const result = run('git', ['-C', worktreePath, ...gitArgs], { timeout: 20_000 });
+    for (const filePath of parseGitPathList(result.stdout)) {
+      dirty.add(filePath);
+    }
+  }
+  return Array.from(dirty);
 }
 
 function collectDoctorForceAddPaths(worktreePath) {
@@ -286,22 +301,6 @@ function autoCommitDoctorSandboxChanges(metadata) {
   };
 }
 
-function hasOriginRemote(repoRoot) {
-  return run('git', ['-C', repoRoot, 'remote', 'get-url', 'origin']).status === 0;
-}
-
-function originRemoteLooksLikeGithub(repoRoot) {
-  const originUrl = readGitConfig(repoRoot, 'remote.origin.url');
-  if (!originUrl) {
-    return false;
-  }
-  return /github\.com[:/]/i.test(originUrl);
-}
-
-function isCommandAvailable(commandName) {
-  return run('which', [commandName]).status === 0;
-}
-
 function extractAgentBranchFinishPrUrl(output) {
   const match = String(output || '').match(/\[agent-branch-finish\] PR:\s*(\S+)/);
   return match ? match[1] : '';
@@ -393,21 +392,7 @@ function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
   };
 }
 
-function applyStash(repoRoot, stashRef) {
-  if (!stashRef) {
-    return;
-  }
-  run('git', ['-C', repoRoot, 'stash', 'apply', stashRef], { timeout: 30_000 });
-}
-
-function dropStash(repoRoot, stashRef) {
-  if (!stashRef) {
-    return;
-  }
-  run('git', ['-C', repoRoot, 'stash', 'drop', stashRef], { timeout: 20_000 });
-}
-
-function mergeDoctorSandboxRepairsBackToProtectedBase(options, blocked, metadata, autoCommitResult, finishResult, integrations) {
+function mergeDoctorSandboxRepairsBackToProtectedBase(options, blocked, metadata, autoCommitResult, finishResult) {
   if (options.dryRun) {
     return {
       status: autoCommitResult.status === 'committed' ? 'would-merge' : 'skipped',
@@ -447,132 +432,133 @@ function mergeDoctorSandboxRepairsBackToProtectedBase(options, blocked, metadata
   ]);
   const dirtyPaths = collectWorktreeDirtyPaths(blocked.repoRoot);
   let stashRef = '';
-  let mergeSucceeded = false;
-
-  try {
-    if (dirtyPaths.length > 0) {
-      const unexpectedPaths = dirtyPaths.filter((filePath) => {
-        if (allowedPaths.has(filePath)) {
-          return false;
-        }
-        return !AGENT_WORKTREE_RELATIVE_DIRS.some(
-          (relativeDir) => filePath === relativeDir || filePath.startsWith(`${relativeDir}/`),
-        );
-      });
-      if (unexpectedPaths.length > 0) {
-        return {
-          status: 'failed',
-          note: `protected branch workspace has unrelated local changes: ${unexpectedPaths.join(', ')}`,
-        };
+  if (dirtyPaths.length > 0) {
+    const unexpectedPaths = dirtyPaths.filter((filePath) => {
+      if (allowedPaths.has(filePath)) {
+        return false;
       }
-
-      const stashMessage = `guardex-doctor-merge-${Date.now()}`;
-      const stashResult = run(
-        'git',
-        ['-C', blocked.repoRoot, 'stash', 'push', '--all', '--message', stashMessage],
-        { timeout: 30_000 },
+      return !AGENT_WORKTREE_RELATIVE_DIRS.some(
+        (relativeDir) => filePath === relativeDir || filePath.startsWith(`${relativeDir}/`),
       );
-      if (isSpawnFailure(stashResult)) {
-        return {
-          status: 'failed',
-          note: 'could not stash protected branch doctor drift before merge',
-          stdout: stashResult.stdout || '',
-          stderr: stashResult.stderr || '',
-        };
-      }
-      if (stashResult.status !== 0) {
-        return {
-          status: 'failed',
-          note: 'stashing protected branch doctor drift failed',
-          stdout: stashResult.stdout || '',
-          stderr: stashResult.stderr || '',
-        };
-      }
-
-      const stashLookup = run(
-        'git',
-        ['-C', blocked.repoRoot, 'stash', 'list'],
-        { timeout: 20_000 },
-      );
-      stashRef = String(stashLookup.stdout || '')
-        .split('\n')
-        .find((line) => line.includes(stashMessage))
-        ?.split(':')[0]
-        ?.trim() || '';
-    }
-
-    const restoreResult = ensureRepoBranch(blocked.repoRoot, blocked.branch);
-    if (!restoreResult.ok) {
+    });
+    if (unexpectedPaths.length > 0) {
       return {
         status: 'failed',
-        note: `could not restore protected branch '${blocked.branch}' before applying sandbox repairs`,
-        stdout: restoreResult.stdout || '',
-        stderr: restoreResult.stderr || '',
+        note: `protected branch workspace has unrelated local changes: ${unexpectedPaths.join(', ')}`,
       };
     }
-
-    const mergeResult = run(
+    const stashMessage = `guardex-doctor-merge-${Date.now()}`;
+    const stashResult = run(
       'git',
-      ['-C', blocked.repoRoot, 'merge', '--ff-only', metadata.branch],
+      ['-C', blocked.repoRoot, 'stash', 'push', '--all', '--message', stashMessage],
       { timeout: 30_000 },
     );
-    if (isSpawnFailure(mergeResult)) {
+    if (isSpawnFailure(stashResult)) {
       return {
         status: 'failed',
-        note: 'tracked doctor repair merge errored',
-        stdout: mergeResult.stdout || '',
-        stderr: mergeResult.stderr || '',
+        note: 'could not stash protected branch doctor drift before merge',
+        stdout: stashResult.stdout || '',
+        stderr: stashResult.stderr || '',
       };
     }
-    if (mergeResult.status !== 0) {
+    if (stashResult.status !== 0) {
       return {
         status: 'failed',
-        note: 'tracked doctor repair merge failed',
-        stdout: mergeResult.stdout || '',
-        stderr: mergeResult.stderr || '',
-      };
-    }
-    mergeSucceeded = true;
-
-    let cleanupResult;
-    try {
-      cleanupResult = integrations.cleanupProtectedBaseSandbox(blocked.repoRoot, metadata);
-    } catch (error) {
-      return {
-        status: 'failed',
-        note: `tracked doctor repair merge succeeded but sandbox cleanup failed: ${error.message}`,
-        stdout: mergeResult.stdout || '',
-        stderr: mergeResult.stderr || '',
+        note: 'stashing protected branch doctor drift failed',
+        stdout: stashResult.stdout || '',
+        stderr: stashResult.stderr || '',
       };
     }
 
-    let hookRefreshResult;
-    try {
-      hookRefreshResult = integrations.configureHooks(blocked.repoRoot, false);
-    } catch (error) {
-      return {
-        status: 'failed',
-        note: `tracked doctor repair merge succeeded but local hook refresh failed: ${error.message}`,
-        stdout: mergeResult.stdout || '',
-        stderr: mergeResult.stderr || '',
-      };
-    }
+    const stashLookup = run(
+      'git',
+      ['-C', blocked.repoRoot, 'stash', 'list'],
+      { timeout: 20_000 },
+    );
+    stashRef = String(stashLookup.stdout || '')
+      .split('\n')
+      .find((line) => line.includes(stashMessage))
+      ?.split(':')[0]
+      ?.trim() || '';
+  }
 
+  const restoreResult = ensureRepoBranch(blocked.repoRoot, blocked.branch);
+  if (!restoreResult.ok) {
+    if (stashRef) {
+      run('git', ['-C', blocked.repoRoot, 'stash', 'apply', stashRef], { timeout: 30_000 });
+    }
     return {
-      status: 'merged',
-      note: 'fast-forwarded tracked doctor repairs into the protected base workspace',
+      status: 'failed',
+      note: `could not restore protected branch '${blocked.branch}' before applying sandbox repairs`,
+      stdout: restoreResult.stdout || '',
+      stderr: restoreResult.stderr || '',
+    };
+  }
+
+  const mergeResult = run(
+    'git',
+    ['-C', blocked.repoRoot, 'merge', '--ff-only', metadata.branch],
+    { timeout: 30_000 },
+  );
+  if (isSpawnFailure(mergeResult)) {
+    if (stashRef) {
+      run('git', ['-C', blocked.repoRoot, 'stash', 'apply', stashRef], { timeout: 30_000 });
+    }
+    return {
+      status: 'failed',
+      note: 'tracked doctor repair merge errored',
       stdout: mergeResult.stdout || '',
       stderr: mergeResult.stderr || '',
-      cleanup: cleanupResult,
-      hookRefresh: hookRefreshResult,
     };
-  } finally {
-    if (mergeSucceeded) {
-      dropStash(blocked.repoRoot, stashRef);
-    } else {
-      applyStash(blocked.repoRoot, stashRef);
-    }
   }
+  if (mergeResult.status !== 0) {
+    if (stashRef) {
+      run('git', ['-C', blocked.repoRoot, 'stash', 'apply', stashRef], { timeout: 30_000 });
+    }
+    return {
+      status: 'failed',
+      note: 'tracked doctor repair merge failed',
+      stdout: mergeResult.stdout || '',
+      stderr: mergeResult.stderr || '',
+    };
+  }
+
+  let cleanupResult;
+  try {
+    cleanupResult = cleanupProtectedBaseSandbox(blocked.repoRoot, metadata);
+  } catch (error) {
+    return {
+      status: 'failed',
+      note: `tracked doctor repair merge succeeded but sandbox cleanup failed: ${error.message}`,
+      stdout: mergeResult.stdout || '',
+      stderr: mergeResult.stderr || '',
+    };
+  }
+
+  let hookRefreshResult;
+  try {
+    hookRefreshResult = configureHooks(blocked.repoRoot, false);
+  } catch (error) {
+    return {
+      status: 'failed',
+      note: `tracked doctor repair merge succeeded but local hook refresh failed: ${error.message}`,
+      stdout: mergeResult.stdout || '',
+      stderr: mergeResult.stderr || '',
+    };
+  }
+
+  if (stashRef) {
+    run('git', ['-C', blocked.repoRoot, 'stash', 'drop', stashRef], { timeout: 20_000 });
+  }
+
+  return {
+    status: 'merged',
+    note: 'fast-forwarded tracked doctor repairs into the protected base workspace',
+    stdout: mergeResult.stdout || '',
+    stderr: mergeResult.stderr || '',
+    cleanup: cleanupResult,
+    hookRefresh: hookRefreshResult,
+  };
 }
 
 function createDoctorSkippedOperation(note = 'sandbox doctor did not complete successfully') {
@@ -605,7 +591,7 @@ function createDoctorSandboxExecutionState(note = 'sandbox doctor did not comple
   };
 }
 
-function summarizeDoctorOmxScaffoldSync(repoRoot, dryRun, ensureOmxScaffold) {
+function summarizeDoctorOmxScaffoldSync(repoRoot, dryRun) {
   const omxScaffoldOps = ensureOmxScaffold(repoRoot, dryRun);
   const changedOmxPaths = omxScaffoldOps.filter((operation) => operation.status !== 'unchanged');
   if (changedOmxPaths.length === 0) {
@@ -704,15 +690,155 @@ function syncDoctorLockRegistryAfterMerge(repoRoot, sandboxLockContent) {
   };
 }
 
+function autoFinishReadyAgentBranches(repoRoot, options = {}) {
+  const baseBranch = String(options.baseBranch || '').trim();
+  const dryRun = Boolean(options.dryRun);
+  const waitForMerge = options.waitForMerge !== false;
+  const excludedBranches = new Set(
+    Array.isArray(options.excludeBranches)
+      ? options.excludeBranches.map((branch) => String(branch || '').trim()).filter(Boolean)
+      : [],
+  );
+
+  const summary = {
+    enabled: true,
+    baseBranch,
+    attempted: 0,
+    completed: 0,
+    skipped: 0,
+    failed: 0,
+    details: [],
+  };
+
+  if (!baseBranch || baseBranch === 'HEAD' || baseBranch.startsWith('agent/')) {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep (base branch is missing or not a non-agent local branch).');
+    return summary;
+  }
+
+  if (String(process.env.GUARDEX_DOCTOR_SANDBOX || '') === '1') {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep inside doctor sandbox pass.');
+    return summary;
+  }
+
+  if (String(process.env.GUARDEX_SKIP_AUTO_FINISH_READY_BRANCHES || '') === '1') {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep (GUARDEX_SKIP_AUTO_FINISH_READY_BRANCHES=1).');
+    return summary;
+  }
+
+  if (dryRun) {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep in dry-run mode.');
+    return summary;
+  }
+
+  if (!hasOriginRemote(repoRoot)) {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep (origin remote missing).');
+    return summary;
+  }
+  const explicitGhBin = Boolean(String(process.env.GUARDEX_GH_BIN || '').trim());
+  if (!explicitGhBin && !originRemoteLooksLikeGithub(repoRoot)) {
+    summary.enabled = false;
+    summary.details.push('Skipped auto-finish sweep (origin remote is not GitHub).');
+    return summary;
+  }
+
+  const ghBin = process.env.GUARDEX_GH_BIN || 'gh';
+  if (run(ghBin, ['--version']).status !== 0) {
+    summary.enabled = false;
+    summary.details.push(`Skipped auto-finish sweep (${ghBin} not available).`);
+    return summary;
+  }
+
+  const branchWorktrees = mapWorktreePathsByBranch(repoRoot);
+  const agentBranches = listLocalAgentBranches(repoRoot);
+  if (agentBranches.length === 0) {
+    summary.enabled = false;
+    summary.details.push('No local agent branches found for auto-finish sweep.');
+    return summary;
+  }
+
+  for (const branch of agentBranches) {
+    if (excludedBranches.has(branch)) {
+      summary.skipped += 1;
+      summary.details.push(`[skip] ${branch}: excluded from this auto-finish sweep.`);
+      continue;
+    }
+
+    if (branch === baseBranch) {
+      summary.skipped += 1;
+      summary.details.push(`[skip] ${branch}: source branch equals base branch.`);
+      continue;
+    }
+
+    let counts;
+    try {
+      counts = aheadBehind(repoRoot, branch, baseBranch);
+    } catch (error) {
+      summary.failed += 1;
+      summary.details.push(`[fail] ${branch}: unable to compute ahead/behind (${error.message}).`);
+      continue;
+    }
+
+    if (counts.ahead <= 0) {
+      summary.skipped += 1;
+      summary.details.push(`[skip] ${branch}: already merged into ${baseBranch}.`);
+      continue;
+    }
+
+    const branchWorktree = branchWorktrees.get(branch) || '';
+    if (branchWorktree && hasSignificantWorkingTreeChanges(branchWorktree)) {
+      summary.skipped += 1;
+      summary.details.push(`[skip] ${branch}: dirty worktree (${branchWorktree}).`);
+      continue;
+    }
+
+    summary.attempted += 1;
+    const finishArgs = [
+      '--branch',
+      branch,
+      '--base',
+      baseBranch,
+      '--via-pr',
+      waitForMerge ? '--wait-for-merge' : '--no-wait-for-merge',
+      '--cleanup',
+    ];
+    const finishResult = runPackageAsset('branchFinish', finishArgs, { cwd: repoRoot });
+    const combinedOutput = [finishResult.stdout || '', finishResult.stderr || ''].join('\n').trim();
+
+    if (finishResult.status === 0) {
+      summary.completed += 1;
+      summary.details.push(`[done] ${branch}: auto-finish completed.`);
+      continue;
+    }
+
+    const recoverableConflict = detectRecoverableAutoFinishConflict(combinedOutput);
+    if (recoverableConflict) {
+      summary.skipped += 1;
+      const tail = combinedOutput ? ` ${combinedOutput.split('\n').slice(-2).join(' | ')}` : '';
+      summary.details.push(`[skip] ${branch}: ${recoverableConflict.rawLabel}${tail}`);
+      continue;
+    }
+
+    summary.failed += 1;
+    const tail = combinedOutput ? ` ${combinedOutput.split('\n').slice(-2).join(' | ')}` : '';
+    summary.details.push(`[fail] ${branch}: auto-finish failed.${tail}`);
+  }
+
+  return summary;
+}
+
 function executeDoctorSandboxLifecycle(options, blocked, metadata, integrations) {
   const execution = createDoctorSandboxExecutionState();
   const dryRun = Boolean(options.dryRun);
+  const resolvedIntegrations = integrations && typeof integrations === 'object' ? integrations : {};
+  const autoFinishRunner =
+    resolvedIntegrations.autoFinishReadyAgentBranches || autoFinishReadyAgentBranches;
 
-  execution.omxScaffoldSync = summarizeDoctorOmxScaffoldSync(
-    blocked.repoRoot,
-    dryRun,
-    integrations.ensureOmxScaffold,
-  );
+  execution.omxScaffoldSync = summarizeDoctorOmxScaffoldSync(blocked.repoRoot, dryRun);
 
   if (!dryRun) {
     execution.autoCommit = autoCommitDoctorSandboxChanges(metadata);
@@ -738,19 +864,14 @@ function executeDoctorSandboxLifecycle(options, blocked, metadata, integrations)
     metadata,
     execution.autoCommit,
     execution.finish,
-    integrations,
   );
 
-  execution.omxScaffoldSync = summarizeDoctorOmxScaffoldSync(
-    blocked.repoRoot,
-    dryRun,
-    integrations.ensureOmxScaffold,
-  );
+  execution.omxScaffoldSync = summarizeDoctorOmxScaffoldSync(blocked.repoRoot, dryRun);
   execution.lockSync = syncDoctorLockRegistryAfterMerge(
     blocked.repoRoot,
     execution.sandboxLockContent,
   );
-  execution.autoFinish = integrations.autoFinishReadyAgentBranches(blocked.repoRoot, {
+  execution.autoFinish = autoFinishRunner(blocked.repoRoot, {
     baseBranch: blocked.branch,
     dryRun: options.dryRun,
     waitForMerge: options.waitForMerge,
@@ -898,25 +1019,9 @@ function setDoctorSandboxExitCode(nestedResult, execution) {
 }
 
 function runDoctorInSandbox(options, blocked, rawIntegrations = {}) {
-  const integrations = {
-    startProtectedBaseSandbox: requireDoctorIntegration(
-      'startProtectedBaseSandbox',
-      rawIntegrations.startProtectedBaseSandbox,
-    ),
-    cleanupProtectedBaseSandbox: requireDoctorIntegration(
-      'cleanupProtectedBaseSandbox',
-      rawIntegrations.cleanupProtectedBaseSandbox,
-    ),
-    ensureOmxScaffold: requireDoctorIntegration('ensureOmxScaffold', rawIntegrations.ensureOmxScaffold),
-    configureHooks: requireDoctorIntegration('configureHooks', rawIntegrations.configureHooks),
-    autoFinishReadyAgentBranches: requireDoctorIntegration(
-      'autoFinishReadyAgentBranches',
-      rawIntegrations.autoFinishReadyAgentBranches,
-    ),
-  };
-
-  /** @type {SandboxStartResult} */
-  const startResult = integrations.startProtectedBaseSandbox(blocked, {
+  const integrations = rawIntegrations && typeof rawIntegrations === 'object' ? rawIntegrations : {};
+  const startSandbox = integrations.startProtectedBaseSandbox || startProtectedBaseSandbox;
+  const startResult = startSandbox(blocked, {
     taskName: `${SHORT_TOOL_NAME}-doctor`,
     sandboxSuffix: 'gx-doctor',
   });
@@ -925,7 +1030,7 @@ function runDoctorInSandbox(options, blocked, rawIntegrations = {}) {
   const sandboxTarget = resolveSandboxTarget(blocked.repoRoot, metadata.worktreePath, options.target);
   const nestedResult = run(
     process.execPath,
-    [CLI_ENTRY_PATH, ...buildSandboxDoctorArgs(options, sandboxTarget)],
+    [require.main?.filename || process.argv[1], ...buildSandboxDoctorArgs(options, sandboxTarget)],
     { cwd: metadata.worktreePath },
   );
   if (isSpawnFailure(nestedResult)) {
@@ -946,5 +1051,21 @@ function runDoctorInSandbox(options, blocked, rawIntegrations = {}) {
 }
 
 module.exports = {
+  extractAgentBranchStartMetadata,
+  resolveSandboxTarget,
+  buildSandboxDoctorArgs,
+  isSpawnFailure,
+  startProtectedBaseSandbox,
+  cleanupProtectedBaseSandbox,
+  claimDoctorChangedLocks,
+  autoCommitDoctorSandboxChanges,
+  finishDoctorSandboxBranch,
+  mergeDoctorSandboxRepairsBackToProtectedBase,
+  syncDoctorLockRegistryBeforeMerge,
+  syncDoctorLockRegistryAfterMerge,
+  executeDoctorSandboxLifecycle,
+  emitDoctorSandboxJsonOutput,
+  emitDoctorSandboxConsoleOutput,
+  autoFinishReadyAgentBranches,
   runDoctorInSandbox,
 };
