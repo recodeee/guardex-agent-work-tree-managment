@@ -78,23 +78,12 @@ openspec/plan/*
 # multiagent-safety:START
 .omx/
 .omc/
-scripts/agent-branch-start.sh
-scripts/agent-branch-finish.sh
-scripts/codex-agent.sh
-scripts/review-bot-watch.sh
-scripts/agent-worktree-prune.sh
-scripts/agent-file-locks.py
-scripts/install-agent-git-hooks.sh
-scripts/openspec/init-plan-workspace.sh
-scripts/openspec/init-change-workspace.sh
-.githooks/pre-commit
-.githooks/pre-push
-.githooks/post-merge
-.githooks/post-checkout
+scripts/agent-session-state.js
+scripts/guardex-docker-loader.sh
+scripts/guardex-env.sh
+scripts/install-vscode-active-agents-extension.js
+.githooks
 oh-my-codex/
-.codex/skills/guardex/SKILL.md
-.codex/skills/guardex-merge-skills-to-dev/SKILL.md
-.claude/commands/guardex.md
 .omx/state/agent-file-locks.json
 # multiagent-safety:END
 

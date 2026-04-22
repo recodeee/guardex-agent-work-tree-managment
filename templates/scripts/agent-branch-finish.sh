@@ -9,10 +9,29 @@ DELETE_REMOTE_BRANCH=0
 DELETE_REMOTE_BRANCH_EXPLICIT=0
 MERGE_MODE="auto"
 GH_BIN="${GUARDEX_GH_BIN:-gh}"
+NODE_BIN="${GUARDEX_NODE_BIN:-node}"
+CLI_ENTRY="${GUARDEX_CLI_ENTRY:-}"
 CLEANUP_AFTER_MERGE_RAW="${GUARDEX_FINISH_CLEANUP:-false}"
 WAIT_FOR_MERGE_RAW="${GUARDEX_FINISH_WAIT_FOR_MERGE:-false}"
 WAIT_TIMEOUT_SECONDS_RAW="${GUARDEX_FINISH_WAIT_TIMEOUT_SECONDS:-1800}"
 WAIT_POLL_SECONDS_RAW="${GUARDEX_FINISH_WAIT_POLL_SECONDS:-10}"
+
+run_guardex_cli() {
+  if [[ -n "$CLI_ENTRY" ]]; then
+    "$NODE_BIN" "$CLI_ENTRY" "$@"
+    return $?
+  fi
+  if command -v gx >/dev/null 2>&1; then
+    gx "$@"
+    return $?
+  fi
+  if command -v gitguardex >/dev/null 2>&1; then
+    gitguardex "$@"
+    return $?
+  fi
+  echo "[agent-branch-finish] Guardex CLI entrypoint unavailable; rerun via gx." >&2
+  return 127
+}
 
 normalize_bool() {
   local raw="${1:-}"
@@ -431,7 +450,7 @@ run_pr_flow() {
   if [[ -z "$pr_title" ]]; then
     pr_title="Merge ${SOURCE_BRANCH} into ${BASE_BRANCH}"
   fi
-  pr_body="Automated by scripts/agent-branch-finish.sh (PR flow)."
+  pr_body="Automated by gx branch finish (PR flow)."
 
   "$GH_BIN" pr create \
     --base "$BASE_BRANCH" \
@@ -517,9 +536,7 @@ if [[ "$PUSH_ENABLED" -eq 1 ]]; then
   fi
 fi
 
-if [[ -x "${repo_root}/scripts/agent-file-locks.py" ]]; then
-  python3 "${repo_root}/scripts/agent-file-locks.py" release --branch "$SOURCE_BRANCH" >/dev/null 2>&1 || true
-fi
+run_guardex_cli locks release --branch "$SOURCE_BRANCH" >/dev/null 2>&1 || true
 
 base_worktree="$(get_worktree_for_branch "$BASE_BRANCH")"
 if [[ -n "$base_worktree" ]] && is_clean_worktree "$base_worktree" && [[ "$PUSH_ENABLED" -eq 1 ]]; then
@@ -555,29 +572,25 @@ if [[ "$CLEANUP_AFTER_MERGE" -eq 1 ]]; then
     fi
   fi
 
-  if [[ -x "${repo_root}/scripts/agent-worktree-prune.sh" ]]; then
-    prune_args=(--base "$BASE_BRANCH" --only-dirty-worktrees --delete-branches)
-    if [[ "$DELETE_REMOTE_BRANCH" -eq 1 ]]; then
-      prune_args+=(--delete-remote-branches)
-    fi
-    if ! bash "${repo_root}/scripts/agent-worktree-prune.sh" "${prune_args[@]}"; then
-      echo "[agent-branch-finish] Warning: automatic worktree prune failed." >&2
-      echo "[agent-branch-finish] You can run manual cleanup: bash scripts/agent-worktree-prune.sh --base ${BASE_BRANCH} --delete-branches" >&2
-    fi
+  prune_args=(--base "$BASE_BRANCH" --only-dirty-worktrees --delete-branches)
+  if [[ "$DELETE_REMOTE_BRANCH" -eq 1 ]]; then
+    prune_args+=(--delete-remote-branches)
+  fi
+  if ! run_guardex_cli worktree prune "${prune_args[@]}"; then
+    echo "[agent-branch-finish] Warning: automatic worktree prune failed." >&2
+    echo "[agent-branch-finish] You can run manual cleanup: gx cleanup --base ${BASE_BRANCH}" >&2
   fi
 
   echo "[agent-branch-finish] Merged '${SOURCE_BRANCH}' into '${BASE_BRANCH}' via ${merge_status} flow and cleaned source branch/worktree."
   if [[ "$source_worktree" == "$current_worktree" && "$source_worktree" == "${agent_worktree_root}"/* ]]; then
     echo "[agent-branch-finish] Current worktree '${source_worktree}' still exists because it is the active shell cwd." >&2
-    echo "[agent-branch-finish] Leave this directory, then run: bash scripts/agent-worktree-prune.sh --base ${BASE_BRANCH} --delete-branches" >&2
+    echo "[agent-branch-finish] Leave this directory, then run: gx cleanup --base ${BASE_BRANCH}" >&2
   fi
 else
-  if [[ -x "${repo_root}/scripts/agent-worktree-prune.sh" ]]; then
-    if ! bash "${repo_root}/scripts/agent-worktree-prune.sh" --base "$BASE_BRANCH"; then
-      echo "[agent-branch-finish] Warning: temporary worktree prune failed." >&2
-    fi
+  if ! run_guardex_cli worktree prune --base "$BASE_BRANCH"; then
+    echo "[agent-branch-finish] Warning: temporary worktree prune failed." >&2
   fi
 
   echo "[agent-branch-finish] Merged '${SOURCE_BRANCH}' into '${BASE_BRANCH}' via ${merge_status} flow and kept source branch/worktree."
-  echo "[agent-branch-finish] Cleanup later with: bash scripts/agent-worktree-prune.sh --base ${BASE_BRANCH} --delete-branches --delete-remote-branches"
+  echo "[agent-branch-finish] Cleanup later with: gx cleanup --base ${BASE_BRANCH}"
 fi

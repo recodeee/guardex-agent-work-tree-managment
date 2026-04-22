@@ -2,11 +2,11 @@
 """Per-file lock registry for concurrent agent branches.
 
 Usage examples:
-  python3 scripts/agent-file-locks.py claim --branch agent/a path/to/file1 path/to/file2
-  python3 scripts/agent-file-locks.py claim --branch agent/a --allow-delete path/to/obsolete-file
-  python3 scripts/agent-file-locks.py allow-delete --branch agent/a path/to/obsolete-file
-  python3 scripts/agent-file-locks.py validate --branch agent/a --staged
-  python3 scripts/agent-file-locks.py release --branch agent/a
+  gx locks claim --branch agent/a path/to/file1 path/to/file2
+  gx locks claim --branch agent/a --allow-delete path/to/obsolete-file
+  gx locks allow-delete --branch agent/a path/to/obsolete-file
+  gx locks validate --branch agent/a --staged
+  gx locks release --branch agent/a
 """
 
 from __future__ import annotations
@@ -27,9 +27,9 @@ CRITICAL_GUARDRAIL_PATHS = {
     'AGENTS.md',
     '.githooks/pre-commit',
     '.githooks/pre-push',
-    'scripts/agent-branch-start.sh',
-    'scripts/agent-branch-finish.sh',
-    'scripts/agent-file-locks.py',
+    '.githooks/post-merge',
+    '.githooks/post-checkout',
+    'scripts/guardex-env.sh',
 }
 ALLOW_GUARDRAIL_DELETE_ENV = 'AGENT_ALLOW_GUARDRAIL_DELETE'
 
@@ -326,11 +326,11 @@ def cmd_validate(args: argparse.Namespace, repo_root: Path) -> int:
             print(f'    - {file_path}', file=sys.stderr)
         print('    Approve explicit deletions with one of:', file=sys.stderr)
         print(
-            f'      python3 scripts/agent-file-locks.py claim --branch "{args.branch}" --allow-delete <file...>',
+            f'      gx locks claim --branch "{args.branch}" --allow-delete <file...>',
             file=sys.stderr,
         )
         print(
-            f'      python3 scripts/agent-file-locks.py allow-delete --branch "{args.branch}" <file...>',
+            f'      gx locks allow-delete --branch "{args.branch}" <file...>',
             file=sys.stderr,
         )
     if guardrail_delete_blocked:
@@ -343,7 +343,7 @@ def cmd_validate(args: argparse.Namespace, repo_root: Path) -> int:
         )
 
     print('\nClaim files with:', file=sys.stderr)
-    print(f'  python3 scripts/agent-file-locks.py claim --branch "{args.branch}" <file...>', file=sys.stderr)
+    print(f'  gx locks claim --branch "{args.branch}" <file...>', file=sys.stderr)
     return 1
 
 

@@ -40,7 +40,13 @@ function runCmd(cmd, args, cwd, extraEnv = {}) {
   return cp.spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
-    env: { ...sanitizedEnv, ...pushBypassEnv, ...extraEnv },
+    env: {
+      ...sanitizedEnv,
+      GUARDEX_CLI_ENTRY: cliPath,
+      GUARDEX_NODE_BIN: process.execPath,
+      ...pushBypassEnv,
+      ...extraEnv,
+    },
   });
 }
 
@@ -127,7 +133,7 @@ function extractMergeTargetWorktree(output) {
   return match[1].trim();
 }
 
-test('setup installs the managed merge workflow script and package entry', () => {
+test('setup installs the managed merge workflow shim without package script churn', () => {
   const repoDir = initRepo();
   seedCommit(repoDir);
 
@@ -139,7 +145,7 @@ test('setup installs the managed merge workflow script and package entry', () =>
   fs.accessSync(mergeScriptPath, fs.constants.X_OK);
 
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoDir, 'package.json'), 'utf8'));
-  assert.equal(packageJson.scripts['agent:branch:merge'], 'bash ./scripts/agent-branch-merge.sh');
+  assert.equal(packageJson.scripts['agent:branch:merge'], undefined);
 });
 
 test('merge command creates an integration lane, reports overlaps, and merges cleanly', () => {

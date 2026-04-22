@@ -9,10 +9,12 @@ BASE_BRANCH="${GUARDEX_REVIEW_BOT_BASE_BRANCH:-}"
 ONLY_PR="${GUARDEX_REVIEW_BOT_ONLY_PR:-}"
 RETRY_FAILED_RAW="${GUARDEX_REVIEW_BOT_RETRY_FAILED:-false}"
 INCLUDE_DRAFT_RAW="${GUARDEX_REVIEW_BOT_INCLUDE_DRAFT:-false}"
+NODE_BIN="${GUARDEX_NODE_BIN:-node}"
+CLI_ENTRY="${GUARDEX_CLI_ENTRY:-}"
 
 usage() {
   cat <<'USAGE'
-Usage: bash scripts/review-bot-watch.sh [options]
+Usage: gx review [options]
 
 Continuously monitor GitHub pull requests targeting a base branch and dispatch
 one Codex-agent task per newly opened/updated PR.
@@ -32,6 +34,23 @@ Options:
 Environment overrides:
   GUARDEX_REVIEW_BOT_PROMPT_APPEND  Additional instructions appended to each Codex prompt
 USAGE
+}
+
+run_guardex_cli() {
+  if [[ -n "$CLI_ENTRY" ]]; then
+    "$NODE_BIN" "$CLI_ENTRY" "$@"
+    return $?
+  fi
+  if command -v gx >/dev/null 2>&1; then
+    gx "$@"
+    return $?
+  fi
+  if command -v gitguardex >/dev/null 2>&1; then
+    gitguardex "$@"
+    return $?
+  fi
+  echo "[review-bot-watch] Guardex CLI entrypoint unavailable; rerun via gx." >&2
+  return 127
 }
 
 normalize_bool() {
@@ -134,15 +153,19 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 127
 fi
 
-if [[ ! -x "$repo_root/scripts/codex-agent.sh" ]]; then
-  echo "[review-bot-watch] Missing scripts/codex-agent.sh. Run: gx setup" >&2
-  exit 1
-fi
-
 if ! gh auth status >/dev/null 2>&1; then
   echo "[review-bot-watch] gh is not authenticated. Run: gh auth login" >&2
   exit 1
 fi
+
+run_codex_agent() {
+  local local_script="$repo_root/scripts/codex-agent.sh"
+  if [[ -x "$local_script" ]]; then
+    bash "$local_script" "$@"
+    return $?
+  fi
+  run_guardex_cli internal run-shell codexAgent --target "$repo_root" "$@"
+}
 
 sanitize_slug() {
   local raw="$1"
@@ -262,7 +285,7 @@ process_one_pr() {
 
   echo "[review-bot-watch] Dispatching Codex agent for PR #${pr} (${head_branch})"
   set +e
-  bash "$repo_root/scripts/codex-agent.sh" \
+  run_codex_agent \
     --task "$task_name" \
     --agent "$AGENT_NAME" \
     --base "$BASE_BRANCH" \

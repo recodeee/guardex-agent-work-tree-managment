@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="360" viewBox="0 0 680 360" role="img" aria-labelledby="tpT tpD">
+<title id="tpT">Parallel agents overwriting each other — the de-progressive loop</title>
+<desc id="tpD">Five agents stream edits toward a shared-files node that pulses on impact. Consequences cascade down the right side and a dashed loop arrow circles back, visualizing the regression cycle.</desc>
+<defs>
+<marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+<path id="pA" d="M 180 35 C 210 35, 210 135, 230 135"/>
+<path id="pB" d="M 180 75 C 210 75, 210 140, 230 140"/>
+<path id="pC" d="M 180 117 L 230 145"/>
+<path id="pD" d="M 180 159 C 210 159, 210 150, 230 150"/>
+<path id="pE" d="M 180 201 C 210 201, 210 155, 230 155"/>
+</defs>
+<style>
+.lbl{font:500 11px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+.lbl2{font:400 10px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+.hub{font:600 12px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+.cap{font:400 11px ui-sans-serif,system-ui,-apple-system,Segoe UI,sans-serif}
+@media (prefers-reduced-motion:reduce){.anim-pkt circle,.anim-dash{display:none}}
+</style>
+<rect width="680" height="360" rx="10" fill="#0d1117"/>
+<g stroke="#30363d" stroke-width="1.5" fill="none">
+<path d="M 180 35 C 210 35, 210 135, 230 135" marker-end="url(#arr)"/>
+<path d="M 180 75 C 210 75, 210 140, 230 140" marker-end="url(#arr)"/>
+<path d="M 180 117 L 230 145" marker-end="url(#arr)"/>
+<path d="M 180 159 C 210 159, 210 150, 230 150" marker-end="url(#arr)"/>
+<path d="M 180 201 C 210 201, 210 155, 230 155" marker-end="url(#arr)"/>
+</g>
+<g stroke="#30363d" stroke-width="1.5" fill="none">
+<path d="M 390 120 L 440 40" marker-end="url(#arr)"/>
+<path d="M 550 58 L 550 88" marker-end="url(#arr)"/>
+<path d="M 550 126 L 550 156" marker-end="url(#arr)"/>
+<path d="M 550 194 L 550 224" marker-end="url(#arr)"/>
+</g>
+<g>
+<rect x="20" y="18" width="160" height="34" rx="4" fill="#21262d" stroke="#30363d"/>
+<text x="30" y="33" class="lbl" fill="#c9d1d9">Agent A adds assertions</text>
+<text x="30" y="46" class="lbl2" fill="#7d8590">in a shared test</text>
+<rect x="20" y="58" width="160" height="34" rx="4" fill="#21262d" stroke="#30363d"/>
+<text x="30" y="73" class="lbl" fill="#c9d1d9">Agent B rewrites</text>
+<text x="30" y="86" class="lbl2" fill="#7d8590">the same test flow</text>
+<rect x="20" y="100" width="160" height="34" rx="4" fill="#21262d" stroke="#30363d"/>
+<text x="30" y="115" class="lbl" fill="#c9d1d9">Agent C updates</text>
+<text x="30" y="128" class="lbl2" fill="#7d8590">the shared helper</text>
+<rect x="20" y="142" width="160" height="34" rx="4" fill="#21262d" stroke="#30363d"/>
+<text x="30" y="157" class="lbl" fill="#c9d1d9">Agent D deletes lines</text>
+<text x="30" y="170" class="lbl2" fill="#7d8590">Agent A just added</text>
+<rect x="20" y="184" width="160" height="34" rx="4" fill="#21262d" stroke="#30363d"/>
+<text x="30" y="199" class="lbl" fill="#c9d1d9">Agent E saves</text>
+<text x="30" y="212" class="lbl2" fill="#7d8590">an older snapshot</text>
+</g>
+<g class="anim-pkt" fill="#f85149">
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="0s"><mpath href="#pA"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.2s"><mpath href="#pA"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="0.35s"><mpath href="#pB"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.55s"><mpath href="#pB"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="0.7s"><mpath href="#pC"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.9s"><mpath href="#pC"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="0.2s"><mpath href="#pD"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.4s"><mpath href="#pD"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="0.55s"><mpath href="#pE"/></animateMotion></circle>
+<circle r="3.5"><animateMotion dur="2.4s" repeatCount="indefinite" begin="1.75s"><mpath href="#pE"/></animateMotion></circle>
+</g>
+<g>
+<rect x="230" y="108" width="160" height="64" rx="6" stroke="#f85149" stroke-width="1.5" fill="#3d1e1e">
+<animate attributeName="fill" values="#3d1e1e;#6e1b1b;#3d1e1e" dur="0.6s" repeatCount="indefinite"/>
+</rect>
+<text x="310" y="135" class="hub" fill="#ffa657" text-anchor="middle">Several agents</text>
+<text x="310" y="155" class="hub" fill="#ffa657" text-anchor="middle">touch the same files</text>
+</g>
+<g>
+<rect x="440" y="22" width="220" height="36" rx="4" fill="#1f1011" stroke="#57140f">
+<animate attributeName="fill" values="#1f1011;#1f1011;#b62324;#1f1011;#1f1011" keyTimes="0;0.08;0.10;0.18;1" dur="4s" repeatCount="indefinite"/>
+</rect>
+<text x="550" y="38" class="lbl" fill="#c9d1d9" text-anchor="middle">One agent overwrites</text>
+<text x="550" y="51" class="lbl2" fill="#7d8590" text-anchor="middle">another agent's edits</text>
+<rect x="440" y="90" width="220" height="36" rx="4" fill="#1f1011" stroke="#57140f">
+<animate attributeName="fill" values="#1f1011;#1f1011;#b62324;#1f1011;#1f1011" keyTimes="0;0.14;0.16;0.24;1" dur="4s" repeatCount="indefinite"/>
+</rect>
+<text x="550" y="106" class="lbl" fill="#c9d1d9" text-anchor="middle">Another agent deletes</text>
+<text x="550" y="119" class="lbl2" fill="#7d8590" text-anchor="middle">code the others added</text>
+<rect x="440" y="158" width="220" height="36" rx="4" fill="#1f1011" stroke="#57140f">
+<animate attributeName="fill" values="#1f1011;#1f1011;#b62324;#1f1011;#1f1011" keyTimes="0;0.20;0.22;0.30;1" dur="4s" repeatCount="indefinite"/>
+</rect>
+<text x="550" y="174" class="lbl" fill="#c9d1d9" text-anchor="middle">Lost work, rework,</text>
+<text x="550" y="187" class="lbl2" fill="#7d8590" text-anchor="middle">and review confusion</text>
+<rect x="440" y="226" width="220" height="36" rx="4" fill="#1f1011" stroke="#57140f">
+<animate attributeName="fill" values="#1f1011;#1f1011;#b62324;#1f1011;#1f1011" keyTimes="0;0.26;0.28;0.36;1" dur="4s" repeatCount="indefinite"/>
+</rect>
+<text x="550" y="242" class="lbl" fill="#c9d1d9" text-anchor="middle">Regression risk</text>
+<text x="550" y="255" class="lbl2" fill="#7d8590" text-anchor="middle">and flaky fixes grow</text>
+</g>
+<path class="anim-dash" d="M 440 244 C 280 310, 200 280, 230 170" stroke="#f85149" stroke-width="1.5" stroke-dasharray="6 4" fill="none" marker-end="url(#arr)">
+<animate attributeName="stroke-dashoffset" values="0;-20" dur="0.8s" repeatCount="indefinite"/>
+</path>
+<text x="310" y="300" class="cap" fill="#7d8590" text-anchor="middle">…and the cycle starts again</text>
+<text x="340" y="340" class="cap" fill="#7d8590" text-anchor="middle">Five agents touch the same files. One overwrite turns into deletion, lost work, and a regression loop.</text>
+</svg>

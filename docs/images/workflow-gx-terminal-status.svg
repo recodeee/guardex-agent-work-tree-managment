@@ -1,45 +1,80 @@
-<svg width="1600" height="1224" viewBox="0 0 1600 1224" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+<svg width="1600" height="1660" viewBox="0 0 1600 1660" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">GitGuardex terminal status output</title>
-  <desc id="desc">A terminal screenshot style illustration showing the gx status help screen with active services, repo path, branch, commands, and doctor hint.</desc>
+  <desc id="desc">A terminal screenshot style illustration showing the updated gx help screen with active services, repo path, branch, merge and release commands, agent bot controls, repo toggle guidance, and the doctor hint.</desc>
 
-  <rect width="1600" height="1224" fill="#101725"/>
-  <rect x="18" y="18" width="1564" height="1188" rx="16" fill="#05070C" stroke="#1E293B"/>
+  <rect width="1600" height="1660" fill="#101725"/>
+  <rect x="18" y="18" width="1564" height="1624" rx="16" fill="#05070C" stroke="#1E293B"/>
   <rect x="18" y="18" width="1564" height="42" rx="16" fill="#111827"/>
   <circle cx="52" cy="39" r="7" fill="#EF4444"/>
   <circle cx="76" cy="39" r="7" fill="#F59E0B"/>
   <circle cx="100" cy="39" r="7" fill="#10B981"/>
 
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="31">
-    <text x="28" y="92">
-      <tspan fill="#22C55E">deadpool@recodee:~/</tspan><tspan fill="#F472B6">Documents/recodee</tspan><tspan fill="#22C55E">$ gx</tspan>
-    </text>
+  <g font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="31">
+    <text x="28" y="92" fill="#22C55E">deadpool@recodee:~/</text>
+    <text x="382" y="92" fill="#F472B6">Documents/recodee</text>
+    <text x="798" y="92" fill="#22C55E">$ gx</text>
   </g>
 
-  <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-size="30" fill="#F8FAFC">
-    <text x="28" y="142">[gitguardex] CLI: @imdeadpool/guardex/7.0.10 linux-x64 node-v22.22.0</text>
-    <text x="28" y="186">[gitguardex] Global services:</text>
-    <text x="64" y="230">- ● oh-my-codex: active</text>
-    <text x="64" y="274">- ● oh-my-claude-sisyphus: active</text>
-    <text x="64" y="318">- ● @fission-ai/openspec: active</text>
-    <text x="64" y="362">- ● cavemem: active</text>
-    <text x="64" y="406">- ● @imdeadpool/codex-account-switcher: active</text>
-    <text x="64" y="450">- ● GitHub (gh): active</text>
-    <text x="28" y="494">[gitguardex] Repo safety service: ● active.</text>
-    <text x="28" y="538">[gitguardex] Repo: /home/deadpool/Documents/recodee</text>
-    <text x="28" y="582">[gitguardex] Branch: dev</text>
-    <text x="28" y="626" fill="#22D3EE">gitguardex-tools logs:</text>
+  <g font-family="DejaVu Sans Mono, Liberation Mono, monospace" font-size="24" fill="#F8FAFC">
+    <text x="28" y="142">[gitguardex] CLI: @imdeadpool/guardex/7.0.17 linux-x64 node-v22.22.0</text>
+    <text x="28" y="182">[gitguardex] Global services:</text>
 
-    <text x="52" y="684">└─ USAGE</text>
-    <text x="84" y="728">$ gx &lt;command&gt; [options]</text>
-    <text x="52" y="780">└─ COMMANDS</text>
-    <text x="84" y="824">status   Show GitGuardex CLI + service health without modifying files</text>
-    <text x="84" y="868">setup    Install, repair, and verify guardrails (flags: --repair, --install-only, --target)</text>
-    <text x="84" y="912">doctor   Repair drift + verify (auto-sandboxes on protected main)</text>
-    <text x="84" y="956">protect  Manage protected branches (list/add/remove/set/reset)</text>
-    <text x="84" y="1000">sync     Sync agent branches with origin/&lt;base&gt;</text>
-    <text x="84" y="1044">finish   Commit + PR + merge completed agent branches (--all, --branch)</text>
-    <text x="84" y="1088">cleanup  Prune merged/stale agent branches and worktrees</text>
-    <text x="84" y="1132">prompt   Print AI setup checklist (--exec, --snippet)</text>
-    <text x="84" y="1176">Try 'gitguardex doctor' for one-step repair + verification.</text>
+    <text x="56" y="222">-</text>
+    <circle cx="78" cy="214" r="7" fill="#22C55E"/>
+    <text x="96" y="222">oh-my-codex: active</text>
+    <text x="56" y="262">-</text>
+    <circle cx="78" cy="254" r="7" fill="#22C55E"/>
+    <text x="96" y="262">oh-my-claudecode: active</text>
+    <text x="56" y="302">-</text>
+    <circle cx="78" cy="294" r="7" fill="#22C55E"/>
+    <text x="96" y="302">@fission-ai/openspec: active</text>
+    <text x="56" y="342">-</text>
+    <circle cx="78" cy="334" r="7" fill="#22C55E"/>
+    <text x="96" y="342">cavemem: active</text>
+    <text x="56" y="382">-</text>
+    <circle cx="78" cy="374" r="7" fill="#22C55E"/>
+    <text x="96" y="382">@imdeadpool/codex-account-switcher: active</text>
+    <text x="56" y="422">-</text>
+    <circle cx="78" cy="414" r="7" fill="#22C55E"/>
+    <text x="96" y="422">cavekit: active</text>
+    <text x="56" y="462">-</text>
+    <circle cx="78" cy="454" r="7" fill="#22C55E"/>
+    <text x="96" y="462">caveman: active</text>
+    <text x="56" y="502">-</text>
+    <circle cx="78" cy="494" r="7" fill="#22C55E"/>
+    <text x="96" y="502">GitHub (gh): active</text>
+
+    <text x="28" y="548">[gitguardex] Repo safety service:</text>
+    <circle cx="517" cy="540" r="7" fill="#22C55E"/>
+    <text x="531" y="548">active.</text>
+    <text x="28" y="588">[gitguardex] Repo: /home/deadpool/Documents/recodee</text>
+    <text x="28" y="628">[gitguardex] Branch: dev</text>
+    <text x="28" y="672" fill="#22D3EE">gitguardex-tools logs:</text>
+
+    <text x="52" y="724">└─ USAGE</text>
+    <text x="84" y="764">$ gx &lt;command&gt; [options]</text>
+
+    <text x="52" y="820">└─ COMMANDS</text>
+    <text x="84" y="860">status   Show GitGuardex CLI + service health without modifying files</text>
+    <text x="84" y="900">setup    Install, repair, and verify guardrails (flags: --repair, --install-only, --target)</text>
+    <text x="84" y="940">doctor   Repair drift + verify (auto-sandboxes on protected main)</text>
+    <text x="84" y="980">protect  Manage protected branches (list/add/remove/set/reset)</text>
+    <text x="84" y="1020">merge    Create/reuse an integration lane and merge overlapping agent branches</text>
+    <text x="84" y="1060">sync     Sync agent branches with origin/&lt;base&gt;</text>
+    <text x="84" y="1100">finish   Commit + PR + merge completed agent branches (--all, --branch)</text>
+    <text x="84" y="1140">cleanup  Prune merged/stale agent branches and worktrees</text>
+    <text x="84" y="1180">release  Create or update the current GitHub release with README-generated notes</text>
+    <text x="84" y="1220">agents   Start/stop repo-scoped review + cleanup bots</text>
+    <text x="84" y="1260">prompt   Print AI setup checklist (--exec, --snippet)</text>
+    <text x="84" y="1300">report   Security/safety reports (e.g. OpenSSF scorecard)</text>
+    <text x="84" y="1340">help     Show this help output</text>
+    <text x="84" y="1380">version  Print GitGuardex version</text>
+
+    <text x="52" y="1436">└─ AGENT BOT</text>
+    <text x="84" y="1476">agents  Start/stop review + cleanup bots for this repo</text>
+
+    <text x="52" y="1532">└─ REPO TOGGLE</text>
+    <text x="84" y="1572">Set repo-root .env: GUARDEX_ON=0 disables GitGuardex, GUARDEX_ON=1 enables it again</text>
+    <text x="52" y="1616">└─ Try 'gitguardex doctor' for one-step repair + verification.</text>
   </g>
 </svg>

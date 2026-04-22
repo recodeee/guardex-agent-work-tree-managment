@@ -6,16 +6,35 @@ BASE_BRANCH_EXPLICIT=0
 TARGET_BRANCH=""
 TASK_NAME=""
 AGENT_NAME="${GUARDEX_MERGE_AGENT_NAME:-codex}"
+NODE_BIN="${GUARDEX_NODE_BIN:-node}"
+CLI_ENTRY="${GUARDEX_CLI_ENTRY:-}"
 declare -a SOURCE_BRANCHES=()
 
 usage() {
   cat <<'EOF'
-Usage: scripts/agent-branch-merge.sh --branch <agent/...> [--branch <agent/...> ...] [--into <agent/...>] [--task <task>] [--agent <agent>] [--base <branch>]
+Usage: gx branch merge --branch <agent/...> [--branch <agent/...> ...] [--into <agent/...>] [--task <task>] [--agent <agent>] [--base <branch>]
 
 Examples:
-  bash scripts/agent-branch-merge.sh --branch agent/codex/ui-a --branch agent/codex/ui-b
-  bash scripts/agent-branch-merge.sh --into agent/codex/owner-lane --branch agent/codex/helper-a --branch agent/codex/helper-b
+  gx branch merge --branch agent/codex/ui-a --branch agent/codex/ui-b
+  gx branch merge --into agent/codex/owner-lane --branch agent/codex/helper-a --branch agent/codex/helper-b
 EOF
+}
+
+run_guardex_cli() {
+  if [[ -n "$CLI_ENTRY" ]]; then
+    "$NODE_BIN" "$CLI_ENTRY" "$@"
+    return $?
+  fi
+  if command -v gx >/dev/null 2>&1; then
+    gx "$@"
+    return $?
+  fi
+  if command -v gitguardex >/dev/null 2>&1; then
+    gitguardex "$@"
+    return $?
+  fi
+  echo "[agent-branch-merge] Guardex CLI entrypoint unavailable; rerun via gx." >&2
+  return 127
 }
 
 sanitize_slug() {
@@ -262,7 +281,7 @@ if [[ -z "$TARGET_BRANCH" ]]; then
   start_output=""
   if ! start_output="$(
     cd "$repo_root"
-    env GUARDEX_OPENSPEC_AUTO_INIT=1 bash "scripts/agent-branch-start.sh" "$TASK_NAME" "$AGENT_NAME" "$BASE_BRANCH" 2>&1
+    GUARDEX_OPENSPEC_AUTO_INIT=1 run_guardex_cli branch start "$TASK_NAME" "$AGENT_NAME" "$BASE_BRANCH" 2>&1
   )"; then
     printf '%s\n' "$start_output" >&2
     exit 1
@@ -418,4 +437,4 @@ echo "[agent-branch-merge] Merge sequence complete for '${TARGET_BRANCH}'."
 if [[ "$target_created" -eq 1 ]]; then
   echo "[agent-branch-merge] Review and verify in '${target_worktree}', then finish the integration branch when ready."
 fi
-echo "[agent-branch-merge] Next step: bash scripts/agent-branch-finish.sh --branch \"${TARGET_BRANCH}\" --base \"${BASE_BRANCH}\" --via-pr --wait-for-merge --cleanup"
+echo "[agent-branch-merge] Next step: gx branch finish --branch \"${TARGET_BRANCH}\" --base \"${BASE_BRANCH}\" --via-pr --wait-for-merge --cleanup"

@@ -24,7 +24,7 @@ echo "$BASE_BRANCH"
 2. Start a dedicated integration sandbox from base:
 
 ```sh
-bash scripts/agent-branch-start.sh "merge-skill-files-to-${BASE_BRANCH}" "skill-merge" "$BASE_BRANCH"
+gx branch start "merge-skill-files-to-${BASE_BRANCH}" "skill-merge" "$BASE_BRANCH"
 ```
 
 3. Enter the sandbox worktree printed by the command above.
@@ -48,11 +48,11 @@ git diff --name-only
 ```sh
 git add .codex/skills templates/codex/skills
 git commit -m "Merge skill file updates into ${BASE_BRANCH}"
-bash scripts/agent-branch-finish.sh --branch "$(git rev-parse --abbrev-ref HEAD)" --base "$BASE_BRANCH" --via-pr --wait-for-merge --cleanup
+gx branch finish --branch "$(git rev-parse --abbrev-ref HEAD)" --base "$BASE_BRANCH" --via-pr --wait-for-merge --cleanup
 ```
 
 ## Notes
 
 - If a source branch has non-skill changes, this runbook keeps them out of the merge.
-- If merge conflicts occur, resolve only within the skill files, then rerun `agent-branch-finish.sh`.
+- If merge conflicts occur, resolve only within the skill files, then rerun `gx branch finish`.
 - Do not commit directly on `dev`/`main`; always merge through an agent branch/worktree.

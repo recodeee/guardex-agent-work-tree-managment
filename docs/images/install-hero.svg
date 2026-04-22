@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="260" viewBox="0 0 680 260" role="img" aria-labelledby="iht ihd">
+<title id="iht">GitGuardex install terminal card</title>
+<desc id="ihd">A stylized terminal window showing the install command, its success output, and a next-step command with a blinking cursor.</desc>
+<style>
+.m{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:14px}
+.mm{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:12px}
+.s{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;font-size:11px;letter-spacing:.3px}
+</style>
+<rect x="0" y="0" width="680" height="260" rx="10" fill="#0d1117"/>
+<path d="M 0 10 a 10 10 0 0 1 10 -10 h 660 a 10 10 0 0 1 10 10 v 26 h -680 z" fill="#161b22"/>
+<line x1="0" y1="36" x2="680" y2="36" stroke="#30363d" stroke-width="1"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f57"/>
+<circle cx="42" cy="18" r="6" fill="#febc2e"/>
+<circle cx="62" cy="18" r="6" fill="#28c840"/>
+<text x="340" y="22" text-anchor="middle" fill="#7d8590" class="s">~/my-repo — zsh</text>
+<text x="24" y="80" class="m">
+<tspan fill="#7ee787" font-weight="600">❯</tspan>
+<tspan fill="#c9d1d9" dx="8">npm i -g </tspan>
+<tspan fill="#ffa657">@imdeadpool/guardex</tspan>
+</text>
+<text x="24" y="108" class="mm" fill="#58a6ff">added 47 packages in 3.2s</text>
+<text x="24" y="128" class="mm" fill="#7d8590">
+<tspan>+ @imdeadpool/guardex@</tspan>
+<tspan fill="#d2a8ff">7.0.17</tspan>
+</text>
+<text x="24" y="172" class="m">
+<tspan fill="#7ee787" font-weight="600">❯</tspan>
+<tspan fill="#c9d1d9" dx="8">cd ~/my-repo &amp;&amp; </tspan>
+<tspan fill="#ffa657">gx setup</tspan>
+</text>
+<text x="24" y="200" class="mm" fill="#7ee787">✓ hooks installed</text>
+<text x="24" y="218" class="mm" fill="#7ee787">✓ scripts scaffolded</text>
+<text x="24" y="236" class="m">
+<tspan fill="#7ee787" font-weight="600">❯</tspan>
+<tspan dx="10"> </tspan>
+</text>
+<rect x="42" y="225" width="8" height="14" fill="#c9d1d9">
+<animate attributeName="opacity" values="1;1;0;0" dur="1s" repeatCount="indefinite"/>
+</rect>
+</svg>

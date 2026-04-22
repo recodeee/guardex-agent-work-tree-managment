@@ -10,6 +10,10 @@
 [![CodeQL](https://img.shields.io/github/actions/workflow/status/recodeee/gitguardex/codeql.yml?branch=main&label=CodeQL)](https://github.com/recodeee/gitguardex/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/recodeee/gitguardex/badge)](https://securityscorecards.dev/viewer/?uri=github.com/recodeee/gitguardex)
 
+[about_description.txt](./about_description.txt)
+
+Guardian T-Rex for your multi-agent repo. Isolated worktrees, file locks, and PR-only merges stop parallel Codex & Claude agents from overwriting each other's work. Auto-wires Oh My Codex, Oh My Claude, OpenSpec, and Caveman.
+
 **GitGuardex is a safety layer for parallel agent work in git repos.** If you're running more than one Codex or Claude agent on the same codebase, this is what keeps them from deleting each other's work.
 
 > [!WARNING]
@@ -22,25 +26,39 @@
 
 ## The problem
 
-I was running ~30 Codex agents in parallel and hit a wall: they kept working on the same files at the same time — especially tests — and started overwriting or deleting each other's changes. More agents meant *less* forward progress, not more. Classic de-progressive loop.
+![Parallel agents colliding in the same files](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/problem-agent-collision.svg)
 
-GitGuardex exists to stop that loop. Every agent gets its own worktree, claims the files it's touching, and can't clobber files another agent has claimed. Your local branch stays clean; agents stay in their lanes.
+I was running ~30 Codex agents in parallel and hit a wall: they kept working on the same files at the same time — especially tests — and started overwriting or deleting each other's changes. More agents meant *less* forward progress, not more. Classic de-progressive loop.
 
 ### Solution
 
-```mermaid
-flowchart LR
-    A[Agent A adds assertions in a shared test] --> S[Several agents touch the same files]
-    B[Agent B rewrites the same test flow] --> S
-    C[Agent C updates the shared helper] --> S
-    D[Agent D deletes lines Agent A just added] --> S
-    E[Agent E saves an older snapshot of the file] --> S
-    S --> F[One agent overwrites another agent's edits]
-    F --> G[Another agent deletes code the others just added]
-    G --> H[Lost work, rework, and review confusion]
-    H --> I[Regression risk and flaky fixes grow]
-    I --> S
+![Agent branch/worktree start protocol](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/workflow-branch-start.svg)
+
+GitGuardex exists to stop that loop. Every agent gets its own worktree, claims the files it's touching, and can't clobber files another agent has claimed. Your local branch stays clean; agents stay in their lanes.
+
+
+<p align="center">
+  <img alt="Install GitGuardex" src="https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/install-hero.svg" width="680">
+</p>
+
+<h3 align="center">Install in one line</h3>
+
+```bash
+npm i -g @imdeadpool/guardex
 ```
+
+<p align="center">
+  <sub>
+    Then <code>cd</code> into your repo and run <code>gx setup</code> — hook shims, repo state,
+    and OMX&nbsp;/&nbsp;OpenSpec&nbsp;/&nbsp;caveman wiring all scaffold in one go.
+  </sub>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm" src="https://img.shields.io/npm/v/%40imdeadpool%2Fguardex?label=latest&style=flat-square&color=cb3837&logo=npm&logoColor=white"></a>
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="downloads" src="https://img.shields.io/npm/dm/%40imdeadpool%2Fguardex?label=downloads&style=flat-square&color=0b76c5"></a>
+  <a href="https://github.com/recodeee/gitguardex/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/recodeee/gitguardex?style=flat-square&color=d4ac0d"></a>
+</p>
 
 ### Dashboard
 
@@ -58,7 +76,7 @@ Coming soon: [recodee.com](https://recodee.com) — live account health, usage, 
 - **Protected-base safety** — `main`, `dev`, `master` are blocked by default; agents must go through PRs.
 - **Auto-merges agent configs into every worktree** — `oh-my-codex`, `oh-my-claudecode`, caveman mode, and OpenSpec all get applied automatically so every spawned agent starts tuned, not bare.
 - **Repair/doctor flow** — when drift happens (and it will), `gx doctor` gets you back to a clean state.
-- **Auto-finish** — when Codex exits a session, Guardex commits sandbox changes, syncs against the base, retries once if the base moved, and opens a PR.
+- **Auto-finish** — when Codex exits a session, GitGuardex commits sandbox changes, syncs against the base, retries once if the base moved, and opens a PR.
 
 ---
 
@@ -70,7 +88,87 @@ cd /path/to/your/repo
 gx setup
 ```
 
-That's it. Setup installs hooks, scripts, templates, and scaffolds OpenSpec/caveman/OMX wiring. Aliases: `gx` (preferred), `gitguardex` (full), `guardex` (legacy).
+That's it. Install and update via `@imdeadpool/guardex`. Setup installs the minimal repo footprint: managed hook shims, repo-local state, AGENTS wiring, OpenSpec/caveman/OMX scaffolding, and a small set of repo-local helper assets. Aliases: `gx` (preferred), `gitguardex` (full), `guardex` (legacy compatibility).
+
+---
+
+## How `AGENTS.md` and `CLAUDE.md` are handled
+
+> [!IMPORTANT]
+> **GitGuardex never overwrites your guidance.** Only the content between these markers is managed:
+>
+> ```text
+> <!-- multiagent-safety:START -->
+>   ... managed content ...
+> <!-- multiagent-safety:END -->
+> ```
+>
+> Everything outside that block is preserved byte-for-byte.
+
+### Behavior at a glance
+
+<div align="center">
+
+| Your repo has&hellip; | `gx setup` / `gx doctor` does&hellip; |
+| :--- | :--- |
+| `AGENTS.md` **with** markers | Refreshes **only** the managed block |
+| `AGENTS.md` **without** markers | Appends the managed block to the end |
+| No `AGENTS.md` | Creates it with the managed block |
+| A root `CLAUDE.md` | Leaves it alone |
+
+</div>
+
+> [!NOTE]
+> In this repo, `CLAUDE.md` is a symlink to `AGENTS.md`, so Claude reads the same contract. Optional Codex/Claude companion files are installed at the user level with `gx install-agent-skills`, not copied into each repo.
+
+### Decision flow
+
+```mermaid
+flowchart TD
+    Start([gx setup / gx doctor])
+    Check{AGENTS.md<br/>exists?}
+    Markers{Markers<br/>present?}
+    Create[Create AGENTS.md<br/>with managed block]
+    Refresh[Refresh the<br/>managed block]
+    Append[Append managed block<br/>to end of file]
+    Done([Repo-owned text preserved])
+
+    Start --> Check
+    Check -- No --> Create
+    Check -- Yes --> Markers
+    Markers -- Yes --> Refresh
+    Markers -- No --> Append
+    Create --> Done
+    Refresh --> Done
+    Append --> Done
+
+    classDef entry   fill:#0b76c5,stroke:#60a5fa,stroke-width:2px,color:#fff
+    classDef decide  fill:#78350f,stroke:#fbbf24,stroke-width:2px,color:#fff
+    classDef action  fill:#374151,stroke:#94a3b8,stroke-width:1.5px,color:#f1f5f9
+    classDef finish  fill:#064e3b,stroke:#34d399,stroke-width:2px,color:#fff
+
+    class Start entry
+    class Check,Markers decide
+    class Create,Refresh,Append action
+    class Done finish
+```
+
+### What actually changes
+
+```diff
+  # AGENTS
+
+  Project-specific guidance before managed block.
+
+  <!-- multiagent-safety:START -->
+- - old managed contract
++ - current GitGuardex-managed contract
+  <!-- multiagent-safety:END -->
+
+  Trailing repo notes after managed block.
+```
+
+Only lines **inside** the marker block change. Everything above and below is preserved exactly.
 
 ---
 
@@ -80,7 +178,7 @@ Before you branch, repair, or start agents, run plain `gx`. It gives you a one-s
 
 ![GitGuardex terminal status output](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/workflow-gx-terminal-status.svg)
 
-Use `gx setup` the first time you wire GitGuardex into a repo. It bootstraps the managed hooks, scripts, templates, and optional workspace/OpenSpec wiring. If the repo drifts later, use `gx doctor` as the repair path: it reapplies the managed safety files, verifies the setup, and on protected `main` it auto-sandboxes the repair so your visible base branch stays clean.
+Use `gx setup` the first time you wire GitGuardex into a repo. It bootstraps the managed hook shims, repo-local state, and optional workspace/OpenSpec wiring. If the repo drifts later, use `gx doctor` as the repair path: it reapplies the managed safety files, verifies the setup, and on protected `main` it auto-sandboxes the repair so your visible base branch stays clean.
 
 ---
 
@@ -90,25 +188,30 @@ Per new agent task:
 
 ```sh
 # 1) Start isolated branch/worktree
-bash scripts/agent-branch-start.sh "task-name" "agent-name"
+gx branch start "task-name" "agent-name"
 
 # 2) Claim the files you're going to touch
-python3 scripts/agent-file-locks.py claim \
+gx locks claim \
   --branch "$(git rev-parse --abbrev-ref HEAD)" <file...>
 
 # 3) Implement + verify
 npm test
 
-# 4) Finish (commit + push + PR + merge)
-bash scripts/agent-branch-finish.sh \
+# 4) Finish (commit + push + PR + merge + cleanup)
+gx branch finish \
   --branch "$(git rev-parse --abbrev-ref HEAD)" \
-  --base dev --via-pr --wait-for-merge
-
-# 5) Optional: cleanup after merge
-gx cleanup --branch "$(git rev-parse --abbrev-ref HEAD)"
+  --base main --via-pr --wait-for-merge --cleanup
 ```
 
-If you use `scripts/codex-agent.sh`, the finish flow runs automatically when the Codex session exits — it auto-commits, retries once after syncing if the base moved during the run, then pushes and opens the PR.
+If you launch Codex through Guardex, the finish flow runs automatically when the Codex session exits — it auto-commits, retries once after syncing if the base moved during the run, then pushes and opens the PR.
+
+GitGuardex normally prunes merged sandboxes for you as part of the finish flow. If you simply do not want a local sandbox/worktree anymore, remove that worktree directly; delete the branch too only if you are intentionally abandoning that lane:
+
+```sh
+git worktree remove .omx/agent-worktrees/<worktree-name>
+# Claude Code sandboxes live under .omc/agent-worktrees/<worktree-name>
+git branch -D agent/<role>/<task>   # optional, only if you are discarding the lane
+```
 
 Running Codex across several existing worktrees (e.g. from VS Code Source Control)? Finalize everything ready at once:
 
@@ -132,9 +235,17 @@ Codex sessions default to `.omx/agent-worktrees/`. Claude Code sessions default 
 
 ### How It Works In VS Code
 
-This is the real Source Control shape Guardex is aiming for: isolated agent branches, clear OpenSpec artifacts, and no pile-up on one shared checkout.
+This is the real Source Control shape GitGuardex is aiming for: isolated agent branches, clear OpenSpec artifacts, and no pile-up on one shared checkout.
 
 ![Guarded VS Code Source Control example](https://raw.githubusercontent.com/recodeee/gitguardex/main/docs/images/workflow-source-control-grouped.png)
+
+To install the real companion into local VS Code from a GitGuardex-wired repo:
+
+```sh
+node scripts/install-vscode-active-agents-extension.js
+```
+
+It adds an `Active Agents` view to the Source Control container, groups each live repo into `ACTIVE AGENTS` and `CHANGES` sections, splits `ACTIVE AGENTS` into `WORKING NOW` and `THINKING` when both states are present, reads `.omx/state/active-sessions/*.json`, derives `thinking` versus `working` from each live sandbox worktree, and surfaces a working-count summary in the repo/header affordances. Reload the VS Code window after install.
 
 ---
 
@@ -272,7 +383,7 @@ A few things worth knowing up front:
 - Direct commits/pushes to protected branches are **blocked** by default. Agents must use the `agent/*` + PR flow.
 - **Exception:** VS Code Source Control commits are allowed on protected branches that exist only locally (no upstream, no remote branch).
 - On protected `main`, `gx doctor` auto-runs in a sandbox agent branch/worktree so it can't touch your real main.
-- In-place agent branching is disabled. `scripts/agent-branch-start.sh` always creates a separate worktree so your visible local/base branch never changes.
+- In-place agent branching is disabled. `gx branch start` always creates a separate worktree so your visible local/base branch never changes.
 - Fresh sandbox branches start with no git upstream. Guardex records the protected base in `branch.<name>.guardexBase`, and the first `git push -u` publishes the real upstream.
 - Interactive self-update prompt defaults to **No** (`[y/N]`).
 
@@ -301,7 +412,7 @@ GitGuardex is designed to work alongside these. All optional — but if you're r
 
 ### oh-my-codex — Codex config + skills framework
 
-Loads skills, slash commands, and session defaults into Codex. Guardex merges `oh-my-codex` into every agent worktree automatically, so every spawned agent starts with the same tuned config instead of vanilla Codex.
+Loads skills, slash commands, and session defaults into Codex. GitGuardex merges `oh-my-codex` into every agent worktree automatically, so every spawned agent starts with the same tuned config instead of vanilla Codex.
 
 ```sh
 npm i -g oh-my-codex
@@ -312,7 +423,7 @@ Repo: <https://github.com/Yeachan-Heo/oh-my-codex>
 
 ### oh-my-claudecode — Claude Code equivalent
 
-Claude-side mirror of oh-my-codex. Same idea: skills, commands, and defaults loaded into every Claude Code session. Guardex merges it into worktrees alongside oh-my-codex so mixed Codex + Claude agent fleets behave consistently. For the npm CLI/runtime path, the published package name is `oh-my-claude-sisyphus`.
+Claude-side mirror of oh-my-codex. Same idea: skills, commands, and defaults loaded into every Claude Code session. GitGuardex merges it into worktrees alongside oh-my-codex so mixed Codex + Claude agent fleets behave consistently. For the npm CLI/runtime path, the published package name is `oh-my-claude-sisyphus`.
 
 ```sh
 npm i -g oh-my-claude-sisyphus@latest
@@ -431,8 +542,9 @@ Expanded flow:
 
 ### OpenSpec in agent sub-branches
 
-- `scripts/codex-agent.sh` enforces OpenSpec workspaces before launching Codex.
-- `scripts/agent-branch-start.sh` can scaffold both `openspec/changes/<slug>/` and `openspec/plan/<slug>/` when `GUARDEX_OPENSPEC_AUTO_INIT=true`.
+- The Guardex Codex launcher enforces OpenSpec workspaces before launching Codex.
+- `gx branch start` can scaffold both `openspec/changes/<slug>/` and `openspec/plan/<slug>/` when `GUARDEX_OPENSPEC_AUTO_INIT=true`.
+- The collaboration section in `tasks.md` is there for real cleanup handoffs too. If the first Codex/Claude session finishes the implementation work but hits a usage limit before `agent-branch-finish --cleanup`, hand the same sandbox to another agent, let that agent finish cleanup, and record the join/handoff in the change task.
 
 Environment variables:
 
@@ -448,25 +560,29 @@ Environment variables:
 ## Files installed by setup
 
 ```text
-scripts/agent-branch-start.sh
-scripts/agent-branch-finish.sh
-scripts/codex-agent.sh
-scripts/review-bot-watch.sh
-scripts/agent-worktree-prune.sh
-scripts/agent-file-locks.py
-scripts/install-agent-git-hooks.sh
-scripts/openspec/init-plan-workspace.sh
-.githooks/pre-commit
-.githooks/pre-push
-.codex/skills/gitguardex/SKILL.md
-.claude/commands/gitguardex.md
+AGENTS.md                   # managed multi-agent block appended/refreshed in place
+.githooks/pre-commit        # shim -> gx hook run pre-commit
+.githooks/pre-push          # shim -> gx hook run pre-push
+.githooks/post-merge        # shim -> gx hook run post-merge
+.githooks/post-checkout     # shim -> gx hook run post-checkout
+scripts/guardex-env.sh      # repo toggle + hook/helper env bridge
+scripts/guardex-docker-loader.sh       # compose env/loader helper
+scripts/agent-session-state.js         # active-session state helper
+scripts/install-vscode-active-agents-extension.js
+.omc/agent-worktrees        # Claude sandbox root
+.omx/agent-worktrees        # Codex sandbox root
+.omx/state/agent-file-locks.json       # file-lock registry
 .github/pull.yml.example
 .github/workflows/cr.yml
-.omc/agent-worktrees
-.omx/state/agent-file-locks.json
+vscode/guardex-active-agents/package.json
+vscode/guardex-active-agents/extension.js
+vscode/guardex-active-agents/session-schema.js
+vscode/guardex-active-agents/README.md
 ```
 
-If `package.json` exists, setup also adds `agent:*` helper scripts.
+Legacy compatibility note: older repos may still contain repo-local workflow scripts under `scripts/`. Direct `gx branch ...`, `gx locks ...`, `gx finish`, `gx cleanup`, `gx merge`, and `gx migrate` do not require them. `gx migrate` removes those leftover workflow shims by default. The CLI still honors repo-local `scripts/review-bot-watch.sh` and `scripts/codex-agent.sh` when they are already present so older repos can keep working during migration.
+
+Optional Codex/Claude user-level companions still install with `gx install-agent-skills`; they are not copied into each repo.
 
 ---
 
@@ -497,7 +613,7 @@ gh workflow run sync-frontend-mirror.yml
 
 Being honest about where this still has issues:
 
-- **Usage limit mid-task.** When an agent hits its Codex/Claude usage limit partway through, the cleanup flow currently has to be handed to a different agent. It works, but the handoff is uglier than I'd like.
+- **Usage limit mid-task.** When an agent hits its Codex/Claude usage limit partway through, another agent may need to take over the same sandbox and run the remaining finish/cleanup steps. The OpenSpec collaboration checklist is there to capture that handoff, but it is still uglier than I'd like.
 - **Conflict-stuck probes.** Fixed in v7.0.2 — earlier versions could leak `__source-probe-*` worktrees when the sync-guard rebase hit conflicts. If you're on an older release, `gx cleanup` sweeps these.
 - **Windows.** Most of the hook surface assumes a POSIX shell. Use WSL or symlink-enabled git if you're on Windows.
 
@@ -529,6 +645,30 @@ npm pack --dry-run
 <details>
 <summary><strong>v7.x</strong></summary>
 
+### v7.0.19
+- `gx setup` and `gx doctor` now accept targeted managed-file recovery after `--force`, so `gx doctor --force scripts/review-bot-watch.sh` repairs the named managed file instead of failing on an unknown argument.
+- Managed-file conflict output now teaches both recovery forms directly: `--force <managed-path>` for one file and plain `--force` for whole-surface rewrites.
+- GitGuardex now keeps small-task routing caveman-only by default and makes working VS Code agent lanes easier to spot at a glance while keeping the CLI-owned install-surface rollout intact.
+- Bumped the release from `7.0.18` → `7.0.19` so the shipped setup/doctor recovery and UX refinements land on a fresh publishable npm version.
+
+### v7.0.18
+- GitGuardex now keeps the install workflow in `gx` itself: `gx branch ...`, `gx locks ...`, `gx worktree prune`, `gx migrate`, and user-level agent-skill install now own the agent lifecycle instead of teaching pasted repo scripts as the primary surface.
+- Fresh installs switch repo hooks to tiny `gx hook run ...` shims, stop copying repo-local workflow implementations and repo-local skills, and stop injecting Guardex-managed `agent:*` package scripts into consumer repos.
+- `gx migrate` can move older repos onto the smaller CLI-owned install surface while preserving the managed AGENTS block, lock registry state, hook shims, required gitignore entries, and the repo-local helper assets that still carry local state.
+- Bumped the release from `7.0.17` → `7.0.18` so the shipped CLI-owned install-surface changes land on a fresh publishable npm version.
+
+### v7.0.17
+- Restored the published npm package name to `@imdeadpool/guardex` after the `@imdeadpool/gitguardex` rename only changed the package identity locally and could not rename the existing npm registry entry.
+- README/install/tutorial/self-update surfaces now point back at `@imdeadpool/guardex` while keeping GitGuardex as the product/repo brand and `gitguardex` as the long-form command.
+- Bumped the release from `7.0.16` → `7.0.17` because `@imdeadpool/guardex@7.0.16` is already published on npm.
+
+### v7.0.16
+- GitGuardex now publishes under the matching npm package name `@imdeadpool/gitguardex`, and install/help/docs surfaces point at the renamed package instead of the older `@imdeadpool/guardex` scope.
+- `gx doctor` now keeps nested repo repair runs visibly progressing, and overlapping integration work stays off the protected base branch instead of trying to merge back on `main`.
+- Cleanup and finish flows are less brittle: `codex-agent` no longer waits on PRs that can never exist, and prune cleanup now walks both managed worktree roots so stale sandboxes get removed consistently.
+- Mirror-sync diagnostics are quieter: when the mirror PAT is unset, GitGuardex now skips the sync path instead of marking the run red, and shared `ralplan` lanes stay easier to identify during handoff/debugging.
+- Bumped the release from `7.0.15` → `7.0.16` after npm rejected a republish of `7.0.15`.
+
 ### v7.0.15
 - `gx doctor` no longer blocks recursive nested protected-repo repairs on child PR merge waits; nested sandboxes now force `--no-wait-for-merge` so the parent repair loop can continue.
 - `gx setup` can now refresh managed files from protected `main` through a temporary sandbox branch/worktree, sync the managed outputs back to the visible base checkout, and prune the sandbox afterward.
@@ -540,7 +680,7 @@ npm pack --dry-run
 
 ### v7.0.13
 - `gx status` and `gx setup` now present the Claude companion as `oh-my-claudecode` while still installing the published npm package `oh-my-claude-sisyphus`.
-- When that dependency is inactive or the user declines the optional install, Guardex now prints the upstream repo URL so the missing dependency is explicit instead of hidden behind the npm package name.
+- When that dependency is inactive or the user declines the optional install, GitGuardex now prints the upstream repo URL so the missing dependency is explicit instead of hidden behind the npm package name.
 - Bumped `@imdeadpool/guardex` from `7.0.12` → `7.0.13` after npm rejected a republish over the already-published `7.0.12`.
 
 ### v7.0.12
@@ -598,8 +738,8 @@ npm pack --dry-run
 - **Breaking (soft).** Consolidated 17 commands into 12 visible commands with flag-based subcommands. Removed names still work but print a deprecation notice; will be removed in v8.
 - **Token-usage improvements.** Trimmed auto-installed agent templates that live in every consumer repo and get loaded into every session:
   - `templates/AGENTS.multiagent-safety.md`: 6990 B → 1615 B (−77%)
-  - `templates/codex/skills/guardex/SKILL.md`: 2732 B → 1086 B (−60%)
-  - `templates/claude/commands/guardex.md`: 472 B → 357 B (−24%)
+  - `templates/codex/skills/gitguardex/SKILL.md`: 2732 B → 1086 B (−60%)
+  - `templates/claude/commands/gitguardex.md`: 472 B → 357 B (−24%)
   - Total: 10194 B → 3058 B per consumer repo (−70%, ~1.5k fewer tokens per agent session).
 - New `gx prompt` command replaces three prompt-emitting commands.
 - New flag surface on `gx setup`: `--install-only`, `--repair`.
@@ -640,7 +780,7 @@ Version bumps for npm publish continuity plus incremental fixes: doctor arg-pars
 - Allows tightly guarded Codex-only commits for `AGENTS.md` / `.gitignore` on protected branches.
 
 ### v5.0.0
-- Rebranded CLI to **GuardeX** with `gx`-first command UX.
+- Rebranded CLI to **GitGuardex** with `gx`-first command UX.
 - Published under scoped package name `@imdeadpool/guardex`.
 - Enforced repeatable per-message agent branch lifecycle in setup/init flows.
 - Added codex-auth-aware sandbox branch naming support.

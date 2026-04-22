@@ -1,4 +1,4 @@
-# Reddit Post Kit for GuardeX
+# Reddit Post Kit for GitGuardex
 
 Source baseline: [`README.md`](../README.md)
 
@@ -8,13 +8,13 @@ Project links:
 
 ## Recommended Title Options
 
-1. `I open-sourced GuardeX: Git guardrails for multi-agent coding workflows`
-2. `GuardeX (npm): safer branch + file-ownership workflow for parallel coding agents`
-3. `Built an OSS CLI to stop multi-agent Git collisions (GuardeX)`
+1. `I open-sourced GitGuardex: Git guardrails for multi-agent coding workflows`
+2. `GitGuardex (npm): safer branch + file-ownership workflow for parallel coding agents`
+3. `Built an OSS CLI to stop multi-agent Git collisions (GitGuardex)`
 
 ## Copy-Ready Reddit Post (long)
 
-I open-sourced **GuardeX**, a CLI that adds guardrails for multi-agent coding in Git repos.
+I open-sourced **GitGuardex**, a CLI that adds guardrails for multi-agent coding in Git repos.
 
 The goal is simple: if several agents (or teammates) work in parallel, prevent the common failure modes before they land in `main`.
 
@@ -49,7 +49,7 @@ npm: https://www.npmjs.com/package/@imdeadpool/guardex
 
 ## Copy-Ready Reddit Post (short)
 
-I open-sourced **GuardeX** for safer multi-agent Git workflows.
+I open-sourced **GitGuardex** for safer multi-agent Git workflows.
 
 It adds branch/worktree guardrails, protected-branch enforcement, file-lock ownership, and repair scripts (`gx setup` / `gx doctor`) so parallel agent execution is safer by default.
 
