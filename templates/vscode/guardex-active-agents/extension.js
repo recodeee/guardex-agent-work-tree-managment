@@ -28,6 +28,18 @@ const RELOAD_WINDOW_ACTION = 'Reload Window';
 const UPDATE_LATER_ACTION = 'Later';
 const REFRESH_POLL_INTERVAL_MS = 30_000;
 const INSPECT_PANEL_VIEW_TYPE = 'gitguardex.activeAgents.inspect';
+const GIT_CONFIGURATION_SECTION = 'git';
+const REPO_SCAN_IGNORED_FOLDERS_SETTING = 'repositoryScanIgnoredFolders';
+const MANAGED_REPO_SCAN_IGNORED_FOLDERS = [
+  '.omx/agent-worktrees',
+  '**/.omx/agent-worktrees',
+  '.omx/.tmp-worktrees',
+  '**/.omx/.tmp-worktrees',
+  '.omc/agent-worktrees',
+  '**/.omc/agent-worktrees',
+  '.omc/.tmp-worktrees',
+  '**/.omc/.tmp-worktrees',
+];
 const SESSION_ACTIVITY_GROUPS = [
   { kind: 'blocked', label: 'BLOCKED' },
   { kind: 'working', label: 'WORKING NOW' },
@@ -103,6 +115,73 @@ function sessionIdleDecoration(session, now = Date.now()) {
 
 function formatCountLabel(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function uniqueStringList(values) {
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    if (typeof value !== 'string' || seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+
+  return result;
+}
+
+function stringListsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) {
+    return false;
+  }
+
+  return left.every((value, index) => value === right[index]);
+}
+
+async function ensureManagedRepoScanIgnores() {
+  if (typeof vscode.workspace.getConfiguration !== 'function') {
+    return;
+  }
+
+  const workspaceFolders = vscode.workspace.workspaceFolders || [];
+  if (workspaceFolders.length === 0) {
+    return;
+  }
+
+  const workspaceFolderTarget = workspaceFolders.length > 1
+    ? vscode.ConfigurationTarget?.WorkspaceFolder
+    : vscode.ConfigurationTarget?.Workspace;
+  if (workspaceFolderTarget === undefined) {
+    return;
+  }
+
+  for (const workspaceFolder of workspaceFolders) {
+    const gitConfig = vscode.workspace.getConfiguration(GIT_CONFIGURATION_SECTION, workspaceFolder);
+    const configuredIgnoredFolders = gitConfig.get(REPO_SCAN_IGNORED_FOLDERS_SETTING);
+    const existingIgnoredFolders = Array.isArray(configuredIgnoredFolders)
+      ? configuredIgnoredFolders
+      : [];
+    const nextIgnoredFolders = uniqueStringList([
+      ...existingIgnoredFolders,
+      ...MANAGED_REPO_SCAN_IGNORED_FOLDERS,
+    ]);
+
+    if (stringListsEqual(existingIgnoredFolders, nextIgnoredFolders)) {
+      continue;
+    }
+
+    try {
+      await gitConfig.update(
+        REPO_SCAN_IGNORED_FOLDERS_SETTING,
+        nextIgnoredFolders,
+        workspaceFolderTarget,
+      );
+    } catch {
+      // Leave the extension usable even when the current workspace settings cannot be updated.
+    }
+  }
 }
 
 function sessionIdentityLabel(session) {
@@ -1777,6 +1856,10 @@ function activate(context) {
   activeAgentsStatusItem.command = 'gitguardex.activeAgents.focus';
   provider.attachTreeView(treeView);
   const scheduleRefresh = () => refreshController.scheduleRefresh();
+  const handleWorkspaceFoldersChanged = () => {
+    scheduleRefresh();
+    void ensureManagedRepoScanIgnores();
+  };
   const refresh = () => void refreshController.refreshNow();
   const activeSessionsWatcher = vscode.workspace.createFileSystemWatcher(ACTIVE_SESSION_FILES_GLOB);
   const lockWatcher = vscode.workspace.createFileSystemWatcher(AGENT_FILE_LOCKS_GLOB);
@@ -1902,7 +1985,7 @@ function activate(context) {
     vscode.commands.registerCommand('gitguardex.activeAgents.syncSession', syncSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.stopSession', (session) => stopSession(session, refresh)),
     vscode.commands.registerCommand('gitguardex.activeAgents.openSessionDiff', openSessionDiff),
-    vscode.workspace.onDidChangeWorkspaceFolders(scheduleRefresh),
+    vscode.workspace.onDidChangeWorkspaceFolders(handleWorkspaceFoldersChanged),
     activeSessionsWatcher,
     lockWatcher,
     worktreeLockWatcher,
@@ -1916,6 +1999,7 @@ function activate(context) {
     ...bindRefreshWatcher(worktreeLockWatcher, scheduleRefresh),
     ...bindRefreshWatcher(logWatcher, scheduleRefresh),
   );
+  void ensureManagedRepoScanIgnores();
   void refreshController.refreshNow();
   void maybeAutoUpdateActiveAgentsExtension(context);
 }

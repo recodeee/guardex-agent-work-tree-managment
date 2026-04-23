@@ -244,6 +244,8 @@ function createMockVscode(tempRoot) {
     fileWatchers: [],
     watchers: [],
     workspaceFolderListeners: [],
+    configurationUpdates: [],
+    workspaceConfigurationValues: new Map(),
   };
 
   class TreeItem {
@@ -293,6 +295,29 @@ function createMockVscode(tempRoot) {
   }
 
   const disposable = (onDispose) => ({ dispose: onDispose || (() => {}) });
+  const ConfigurationTarget = {
+    Workspace: 'workspace',
+    WorkspaceFolder: 'workspaceFolder',
+  };
+  const configurationKey = (section, scopePath, key) => `${section}::${scopePath}::${key}`;
+  const resolveWorkspaceScopePath = (scope) => scope?.uri?.fsPath || tempRoot;
+  const readConfigurationValue = (section, scope, key) => {
+    const scopePath = resolveWorkspaceScopePath(scope);
+    const scopedKey = configurationKey(section, scopePath, key);
+    if (registrations.workspaceConfigurationValues.has(scopedKey)) {
+      return registrations.workspaceConfigurationValues.get(scopedKey);
+    }
+    return registrations.workspaceConfigurationValues.get(configurationKey(section, tempRoot, key));
+  };
+  const writeConfigurationValue = (section, scopePath, key, value) => {
+    registrations.workspaceConfigurationValues.set(configurationKey(section, scopePath, key), value);
+  };
+  registrations.getConfigurationValue = (section, scopePath, key) => (
+    registrations.workspaceConfigurationValues.get(configurationKey(section, scopePath, key))
+  );
+  registrations.setConfigurationValue = (section, scopePath, key, value) => {
+    writeConfigurationValue(section, scopePath, key, value);
+  };
 
   function createFileWatcher(pattern) {
     const listeners = {
@@ -553,6 +578,16 @@ function createMockVscode(tempRoot) {
         },
         createFileSystemWatcher: (pattern) => createFileWatcher(pattern),
         findFiles: async () => [],
+        getConfiguration: (section, scope) => ({
+          get: (key) => readConfigurationValue(section, scope, key),
+          update: async (key, value, target) => {
+            const scopePath = target === ConfigurationTarget.WorkspaceFolder
+              ? resolveWorkspaceScopePath(scope)
+              : tempRoot;
+            registrations.configurationUpdates.push({ section, key, scopePath, target, value });
+            writeConfigurationValue(section, scopePath, key, value);
+          },
+        }),
         onDidChangeWorkspaceFolders: (listener) => {
           registrations.workspaceFolderListeners.push(listener);
           return disposable(() => {
@@ -564,6 +599,7 @@ function createMockVscode(tempRoot) {
         },
         workspaceFolders: [{ uri: { fsPath: tempRoot } }],
       },
+      ConfigurationTarget,
       ThemeColor,
     },
   };
@@ -1307,6 +1343,108 @@ test('active-agents extension registers tree and decoration providers', async ()
   assert.equal(rootItems[0].label, 'No active Guardex agents');
   assert.equal(registrations.treeViews[0].badge, undefined);
   assert.equal(registrations.treeViews[0].message, undefined);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension self-heals managed repo-scan ignores on activation and workspace changes', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-scan-ignores-'));
+  const secondRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-scan-ignores-second-'));
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+  const managedRepoScanIgnoredFolders = [
+    '.omx/agent-worktrees',
+    '**/.omx/agent-worktrees',
+    '.omx/.tmp-worktrees',
+    '**/.omx/.tmp-worktrees',
+    '.omc/agent-worktrees',
+    '**/.omc/agent-worktrees',
+    '.omc/.tmp-worktrees',
+    '**/.omc/.tmp-worktrees',
+  ];
+  const mergeManagedRepoScanIgnores = (values) => Array.from(new Set([
+    ...values,
+    ...managedRepoScanIgnoredFolders,
+  ]));
+
+  registrations.setConfigurationValue('git', tempRoot, 'repositoryScanIgnoredFolders', [
+    'custom-ignore',
+    '.omx/agent-worktrees',
+    '.omx/agent-worktrees',
+  ]);
+
+  extension.activate(context);
+  await flushAsyncWork();
+
+  assert.deepEqual(
+    registrations.getConfigurationValue('git', tempRoot, 'repositoryScanIgnoredFolders'),
+    mergeManagedRepoScanIgnores([
+      'custom-ignore',
+      '.omx/agent-worktrees',
+      '.omx/agent-worktrees',
+    ]),
+  );
+  assert.deepEqual(registrations.configurationUpdates, [
+    {
+      section: 'git',
+      key: 'repositoryScanIgnoredFolders',
+      scopePath: tempRoot,
+      target: vscode.ConfigurationTarget.Workspace,
+      value: mergeManagedRepoScanIgnores([
+        'custom-ignore',
+        '.omx/agent-worktrees',
+        '.omx/agent-worktrees',
+      ]),
+    },
+  ]);
+
+  registrations.setConfigurationValue('git', secondRoot, 'repositoryScanIgnoredFolders', [
+    'second-ignore',
+    '.omc/agent-worktrees',
+  ]);
+  vscode.workspace.workspaceFolders = [
+    { uri: { fsPath: tempRoot } },
+    { uri: { fsPath: secondRoot } },
+  ];
+  registrations.workspaceFolderListeners[0]({
+    added: [{ uri: { fsPath: secondRoot } }],
+    removed: [],
+  });
+  await flushAsyncWork();
+
+  assert.deepEqual(
+    registrations.getConfigurationValue('git', secondRoot, 'repositoryScanIgnoredFolders'),
+    mergeManagedRepoScanIgnores([
+      'second-ignore',
+      '.omc/agent-worktrees',
+    ]),
+  );
+  assert.deepEqual(registrations.configurationUpdates, [
+    {
+      section: 'git',
+      key: 'repositoryScanIgnoredFolders',
+      scopePath: tempRoot,
+      target: vscode.ConfigurationTarget.Workspace,
+      value: mergeManagedRepoScanIgnores([
+        'custom-ignore',
+        '.omx/agent-worktrees',
+        '.omx/agent-worktrees',
+      ]),
+    },
+    {
+      section: 'git',
+      key: 'repositoryScanIgnoredFolders',
+      scopePath: secondRoot,
+      target: vscode.ConfigurationTarget.WorkspaceFolder,
+      value: mergeManagedRepoScanIgnores([
+        'second-ignore',
+        '.omc/agent-worktrees',
+      ]),
+    },
+  ]);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
