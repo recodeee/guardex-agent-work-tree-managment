@@ -1670,6 +1670,82 @@ function runSessionTerminalCommand(session, actionLabel, iconId, commandText) {
   terminal.sendText(commandText, true);
 }
 
+function sessionTerminalLabel(session) {
+  return `GitGuardex Terminal: ${sessionDisplayLabel(session)}`;
+}
+
+function listWindowTerminals() {
+  return Array.isArray(vscode.window.terminals) ? vscode.window.terminals : [];
+}
+
+function focusTerminal(terminal) {
+  terminal?.show?.(false);
+}
+
+async function terminalProcessId(terminal) {
+  if (!terminal?.processId) {
+    return null;
+  }
+
+  try {
+    const pid = await terminal.processId;
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function findFallbackSessionTerminal(session) {
+  const label = sessionTerminalLabel(session);
+  return listWindowTerminals().find((terminal) => terminal?.name === label) || null;
+}
+
+async function findSessionTerminal(session) {
+  const pid = Number(session?.pid);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return null;
+  }
+
+  for (const terminal of listWindowTerminals()) {
+    if (await terminalProcessId(terminal) === pid) {
+      return terminal;
+    }
+  }
+
+  return null;
+}
+
+function openFallbackSessionTerminal(session, worktreePath) {
+  const existingTerminal = findFallbackSessionTerminal(session);
+  if (existingTerminal) {
+    focusTerminal(existingTerminal);
+    return existingTerminal;
+  }
+
+  const terminal = vscode.window.createTerminal({
+    name: sessionTerminalLabel(session),
+    cwd: worktreePath,
+    iconPath: new vscode.ThemeIcon('terminal'),
+  });
+  focusTerminal(terminal);
+  return terminal;
+}
+
+async function showSessionTerminal(session) {
+  const worktreePath = ensureSessionWorktree(session, 'show terminal');
+  if (!worktreePath) {
+    return;
+  }
+
+  const terminal = await findSessionTerminal(session);
+  if (terminal) {
+    focusTerminal(terminal);
+    return;
+  }
+
+  openFallbackSessionTerminal(session, worktreePath);
+}
+
 function finishSession(session) {
   if (!session?.branch) {
     showSessionMessage('Cannot finish session: missing branch name.');
@@ -1708,6 +1784,14 @@ function execFileAsync(command, args, options = {}) {
   });
 }
 
+function buildStopSessionCommandText(session, pid) {
+  const parts = ['gx', 'agents', 'stop', '--pid', String(pid)];
+  if (session?.repoRoot) {
+    parts.push('--target', session.repoRoot);
+  }
+  return parts.map(shellQuote).join(' ');
+}
+
 async function stopSession(session, refresh) {
   const pid = Number(session?.pid);
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -1719,12 +1803,26 @@ async function stopSession(session, refresh) {
     return;
   }
 
+  const sessionTerminal = await findSessionTerminal(session);
+  const stopCommandText = buildStopSessionCommandText(session, pid);
   const confirmed = await vscode.window.showWarningMessage(
     `Stop ${sessionDisplayLabel(session)}?`,
-    { modal: true, detail: `Run gx agents stop --pid ${pid}.` },
+    {
+      modal: true,
+      detail: sessionTerminal
+        ? 'Send Ctrl+C to the live session terminal.'
+        : `No live session terminal found. Run ${stopCommandText}.`,
+    },
     'Stop',
   );
   if (confirmed !== 'Stop') {
+    return;
+  }
+
+  if (sessionTerminal) {
+    focusTerminal(sessionTerminal);
+    sessionTerminal.sendText('\u0003', false);
+    refresh();
     return;
   }
 
@@ -1744,71 +1842,6 @@ async function stopSession(session, refresh) {
     showSessionMessage(
       `Failed to stop session ${sessionDisplayLabel(session)}: ${formatGitCommandFailure(error)}`,
     );
-  }
-}
-
-function sessionChangedPaths(session) {
-  const directPaths = Array.isArray(session?.changedPaths)
-    ? session.changedPaths.map(normalizeRelativePath).filter(Boolean)
-    : [];
-  if (directPaths.length > 0) {
-    return [...new Set(directPaths)];
-  }
-  if (!session?.repoRoot || !session?.branch) {
-    return [];
-  }
-
-  const liveSession = readActiveSessions(session.repoRoot)
-    .find((entry) => sessionSelectionKey(entry) === sessionSelectionKey(session));
-  return Array.isArray(liveSession?.changedPaths)
-    ? [...new Set(liveSession.changedPaths.map(normalizeRelativePath).filter(Boolean))]
-    : [];
-}
-
-async function pickSessionDiffPath(session) {
-  const changedPaths = sessionChangedPaths(session);
-  if (changedPaths.length === 0) {
-    return '';
-  }
-  if (changedPaths.length === 1 || !vscode.window.showQuickPick) {
-    return changedPaths[0];
-  }
-
-  const picks = changedPaths.map((relativePath) => ({
-    label: path.basename(relativePath),
-    description: relativePath,
-    relativePath,
-  }));
-  const selection = await vscode.window.showQuickPick(picks, {
-    placeHolder: `Select a changed file for ${sessionDisplayLabel(session)}`,
-    ignoreFocusOut: true,
-  });
-  return selection?.relativePath || '';
-}
-
-async function openSessionDiff(session) {
-  const worktreePath = ensureSessionWorktree(session, 'open diff');
-  if (!worktreePath) {
-    return;
-  }
-
-  const relativePath = await pickSessionDiffPath(session);
-  if (!relativePath) {
-    showSessionMessage(`No changed files to diff for ${sessionDisplayLabel(session)}.`);
-    return;
-  }
-
-  const repoRoot = session?.repoRoot || worktreePath;
-  const absolutePath = path.resolve(repoRoot, relativePath);
-  const resourceUri = vscode.Uri.file(absolutePath);
-  try {
-    await vscode.commands.executeCommand('git.openChange', resourceUri);
-  } catch (error) {
-    if (fs.existsSync(absolutePath)) {
-      await vscode.commands.executeCommand('vscode.open', resourceUri);
-      return;
-    }
-    showSessionMessage(`Failed to open diff for ${sessionDisplayLabel(session)}: ${formatGitCommandFailure(error)}`);
   }
 }
 
@@ -3321,10 +3354,10 @@ function activate(context) {
     vscode.commands.registerCommand('gitguardex.activeAgents.inspect', (session) => {
       inspectPanelManager.open(session || provider.getSelectedSession());
     }),
+    vscode.commands.registerCommand('gitguardex.activeAgents.showSessionTerminal', showSessionTerminal),
     vscode.commands.registerCommand('gitguardex.activeAgents.finishSession', finishSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.syncSession', syncSession),
     vscode.commands.registerCommand('gitguardex.activeAgents.stopSession', (session) => stopSession(session, refresh)),
-    vscode.commands.registerCommand('gitguardex.activeAgents.openSessionDiff', openSessionDiff),
     vscode.workspace.onDidChangeWorkspaceFolders(handleWorkspaceFoldersChanged),
     activeSessionsWatcher,
     lockWatcher,

@@ -3,7 +3,7 @@
   "displayName": "GitGuardex Active Agents",
   "description": "Shows live Guardex sandbox sessions and repo changes in a dedicated VS Code Active Agents sidebar.",
   "publisher": "recodeee",
-  "version": "0.0.16",
+  "version": "0.0.17",
   "license": "MIT",
   "icon": "icon.png",
   "engines": {
@@ -66,9 +66,9 @@
         "icon": "$(debug-stop)"
       },
       {
-        "command": "gitguardex.activeAgents.openSessionDiff",
-        "title": "Open Diff",
-        "icon": "$(diff)"
+        "command": "gitguardex.activeAgents.showSessionTerminal",
+        "title": "Show Terminal",
+        "icon": "$(terminal)"
       }
     ],
     "viewsContainers": {
@@ -134,6 +134,11 @@
           "group": "inline"
         },
         {
+          "command": "gitguardex.activeAgents.showSessionTerminal",
+          "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
+          "group": "inline"
+        },
+        {
           "command": "gitguardex.activeAgents.finishSession",
           "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
           "group": "inline"
@@ -145,11 +150,6 @@
         },
         {
           "command": "gitguardex.activeAgents.stopSession",
-          "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
-          "group": "inline"
-        },
-        {
-          "command": "gitguardex.activeAgents.openSessionDiff",
           "when": "view == gitguardex.activeAgents && viewItem == gitguardex.session",
           "group": "inline"
         }

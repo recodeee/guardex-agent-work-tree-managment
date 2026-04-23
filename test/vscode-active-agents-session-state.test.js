@@ -264,6 +264,7 @@ function createMockVscode(tempRoot) {
     executedCommands: [],
     sourceControls: [],
     terminals: [],
+    nextTerminalPid: 7000,
     openedDocuments: [],
     shownDocuments: [],
     infoMessages: [],
@@ -474,6 +475,7 @@ function createMockVscode(tempRoot) {
         },
       },
       window: {
+        terminals: registrations.terminals,
         showInformationMessage: async (...args) => {
           registrations.infoMessages.push(args);
           if (typeof args[0] === 'string') {
@@ -497,10 +499,14 @@ function createMockVscode(tempRoot) {
         createTerminal: (options) => {
           const terminal = {
             options,
+            name: options?.name,
+            processId: Promise.resolve(options?.processId ?? registrations.nextTerminalPid++),
             shown: false,
+            showArgs: [],
             sentTexts: [],
-            show() {
+            show(preserveFocus) {
               this.shown = true;
+              this.showArgs.push(preserveFocus);
             },
             sendText(text, addNewLine) {
               this.sentTexts.push({ text, addNewLine });
@@ -3357,9 +3363,104 @@ test('active-agents extension opens and refreshes the inspect panel from shared 
   }
 });
 
-test('active-agents extension confirms stop and routes through gx agents stop --pid', async () => {
+test('active-agents extension reveals the matching session terminal and opens a fallback worktree terminal when needed', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-show-terminal-'));
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-show-terminal-worktree-'));
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+
+  const liveTerminal = vscode.window.createTerminal({
+    name: `GitGuardex: ${path.basename(tempRoot)}`,
+    cwd: tempRoot,
+    processId: 4242,
+  });
+  await registrations.commands.get('gitguardex.activeAgents.showSessionTerminal')({
+    label: 'live-task',
+    branch: 'agent/codex/live-task',
+    pid: 4242,
+    repoRoot: tempRoot,
+    worktreePath,
+  });
+
+  assert.equal(registrations.terminals.length, 1);
+  assert.equal(liveTerminal.shown, true);
+  assert.deepEqual(liveTerminal.showArgs, [false]);
+  assert.deepEqual(liveTerminal.sentTexts, []);
+
+  await registrations.commands.get('gitguardex.activeAgents.showSessionTerminal')({
+    label: 'fallback-task',
+    branch: 'agent/codex/fallback-task',
+    pid: 9001,
+    repoRoot: tempRoot,
+    worktreePath,
+  });
+
+  assert.equal(registrations.terminals.length, 2);
+  assert.equal(registrations.terminals[1].options.name, 'GitGuardex Terminal: fallback-task');
+  assert.equal(registrations.terminals[1].options.cwd, worktreePath);
+  assert.equal(registrations.terminals[1].options.iconPath.id, 'terminal');
+  assert.equal(registrations.terminals[1].shown, true);
+  assert.deepEqual(registrations.terminals[1].showArgs, [false]);
+  assert.deepEqual(registrations.terminals[1].sentTexts, []);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension stops matching session terminals with Ctrl+C before gx fallback', async () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-stop-session-'));
   const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-stop-worktree-'));
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  vscode.window.showWarningMessage = async (...args) => {
+    registrations.warningMessages.push(args);
+    return 'Stop';
+  };
+
+  extension.activate(context);
+  const provider = registrations.providers[0].provider;
+  await flushAsyncWork();
+  provider.onDidChangeTreeDataEmitter.fireCount = 0;
+
+  const liveTerminal = vscode.window.createTerminal({
+    name: `GitGuardex: ${path.basename(tempRoot)}`,
+    cwd: tempRoot,
+    processId: 4242,
+  });
+
+  await registrations.commands.get('gitguardex.activeAgents.stopSession')({
+    label: 'live-task',
+    branch: 'agent/codex/live-task',
+    pid: 4242,
+    repoRoot: tempRoot,
+    worktreePath,
+  });
+  await flushAsyncWork();
+
+  assert.ok(registrations.providers[0].provider.onDidChangeTreeDataEmitter.fireCount >= 1);
+  assert.equal(registrations.warningMessages.length, 1);
+  assert.match(registrations.warningMessages[0][0], /Stop live-task\?/);
+  assert.match(registrations.warningMessages[0][1].detail, /Ctrl\+C/);
+  assert.equal(liveTerminal.shown, true);
+  assert.deepEqual(liveTerminal.showArgs, [false]);
+  assert.deepEqual(liveTerminal.sentTexts, [
+    { text: '\u0003', addNewLine: false },
+  ]);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension confirms stop and routes through gx agents stop --pid when no live terminal matches', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-stop-session-fallback-'));
+  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-stop-worktree-fallback-'));
   const { registrations, vscode } = createMockVscode(tempRoot);
   const extension = loadExtensionWithMockVscode(vscode);
   const context = { subscriptions: [] };
@@ -3405,45 +3506,9 @@ test('active-agents extension confirms stop and routes through gx agents stop --
   assert.ok(registrations.providers[0].provider.onDidChangeTreeDataEmitter.fireCount >= 1);
   assert.equal(registrations.warningMessages.length, 1);
   assert.match(registrations.warningMessages[0][0], /Stop live-task\?/);
-  assert.match(registrations.warningMessages[0][1].detail, /gx agents stop --pid 4242/);
-
-  for (const subscription of context.subscriptions) {
-    subscription.dispose?.();
-  }
-});
-
-test('active-agents extension opens the selected changed file through the Git diff UI', async () => {
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-open-diff-'));
-  const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-open-diff-worktree-'));
-  initGitRepo(worktreePath);
-  fs.writeFileSync(path.join(worktreePath, 'tracked.txt'), 'base\n', 'utf8');
-  runGit(worktreePath, ['add', 'tracked.txt']);
-  runGit(worktreePath, ['commit', '-m', 'baseline']);
-  fs.writeFileSync(path.join(worktreePath, 'tracked.txt'), 'base\nchanged\n', 'utf8');
-
-  const { registrations, vscode } = createMockVscode(tempRoot);
-  const extension = loadExtensionWithMockVscode(vscode);
-  const context = { subscriptions: [] };
-
-  extension.activate(context);
-
-  const relativePath = path.relative(tempRoot, path.join(worktreePath, 'tracked.txt')).replace(/\\/g, '/');
-  await registrations.commands.get('gitguardex.activeAgents.openSessionDiff')({
-    label: 'live-task',
-    repoRoot: tempRoot,
-    worktreePath,
-    changedPaths: [relativePath],
-  });
-
-  assert.equal(registrations.openedDocuments.length, 0);
-  assert.equal(registrations.shownDocuments.length, 0);
-  const openChangeCalls = registrations.executedCommands
-    .filter((entry) => entry.command === 'git.openChange')
-    .map((entry) => [entry.command, entry.args[0]?.fsPath || null]);
-  assert.deepEqual(
-    openChangeCalls,
-    [['git.openChange', path.join(worktreePath, 'tracked.txt')]],
-  );
+  assert.match(registrations.warningMessages[0][1].detail, /--pid/);
+  assert.match(registrations.warningMessages[0][1].detail, /4242/);
+  assert.match(registrations.warningMessages[0][1].detail, /--target/);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
