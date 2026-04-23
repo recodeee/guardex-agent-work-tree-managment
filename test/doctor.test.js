@@ -353,6 +353,7 @@ exit 1
 
   result = runNodeWithEnv(['doctor', '--target', repoDir], repoDir, { GUARDEX_GH_BIN: fakeGhPath });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  const doctorOutput = `${result.stdout}\n${result.stderr}`;
   assert.match(result.stdout, /Auto-committed doctor repairs in sandbox branch/);
   assert.match(result.stdout, /Auto-finish flow completed for sandbox branch/);
   assert.equal(
@@ -364,10 +365,28 @@ exit 1
   assertZeroCopyManagedGitignore(repairedRootGitignore);
 
   const createdBranch = extractCreatedBranch(result.stdout);
+  const createdWorktree = extractCreatedWorktree(result.stdout);
   result = runCmd('git', ['show-ref', '--verify', '--quiet', `refs/heads/${createdBranch}`], repoDir);
   assert.notEqual(result.status, 0, 'doctor auto-finish should clean up the merged sandbox branch locally by default');
   result = runCmd('git', ['ls-remote', '--heads', 'origin', createdBranch], repoDir);
   assert.equal(result.stdout.trim(), '', 'doctor auto-finish should clean up the merged sandbox branch remotely by default');
+  assert.equal(
+    fs.existsSync(createdWorktree),
+    false,
+    'doctor auto-finish should remove the sandbox worktree after merge cleanup succeeds',
+  );
+  const worktreeList = runCmd('git', ['worktree', 'list', '--porcelain'], repoDir);
+  assert.equal(worktreeList.status, 0, worktreeList.stderr || worktreeList.stdout);
+  assert.doesNotMatch(
+    worktreeList.stdout,
+    new RegExp(`worktree ${escapeRegexLiteral(createdWorktree)}`),
+    'doctor auto-finish should not leave the sandbox worktree registered after cleanup',
+  );
+  assert.doesNotMatch(
+    doctorOutput,
+    /Current worktree '.*' still exists because it is the active shell cwd/,
+    'doctor should not finish from inside the sandbox cwd anymore',
+  );
 
   const rootStatus = runCmd('git', ['status', '--short', '--untracked-files=no'], repoDir);
   assert.equal(rootStatus.status, 0, rootStatus.stderr || rootStatus.stdout);

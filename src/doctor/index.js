@@ -314,6 +314,118 @@ function doctorFinishFlowIsPending(output) {
   );
 }
 
+function verifyDoctorSandboxCleanup(repoRoot, metadata) {
+  const branchExists = Boolean(metadata.branch) && gitRefExists(repoRoot, `refs/heads/${metadata.branch}`);
+  const worktreeExists = Boolean(metadata.worktreePath) && fs.existsSync(metadata.worktreePath);
+
+  if (!branchExists && !worktreeExists) {
+    return {
+      status: 'verified',
+      note: 'doctor sandbox cleanup verified',
+    };
+  }
+
+  const cleanup = cleanupProtectedBaseSandbox(repoRoot, metadata);
+  const branchStillExists = Boolean(metadata.branch) && gitRefExists(repoRoot, `refs/heads/${metadata.branch}`);
+  const worktreeStillExists = Boolean(metadata.worktreePath) && fs.existsSync(metadata.worktreePath);
+  if (branchStillExists || worktreeStillExists) {
+    return {
+      status: 'failed',
+      note:
+        'doctor sandbox cleanup incomplete ' +
+        `(branch=${branchStillExists ? 'present' : 'missing'}, worktree=${worktreeStillExists ? 'present' : 'missing'})`,
+      cleanup,
+    };
+  }
+
+  return {
+    status: 'verified',
+    note: 'doctor sandbox cleanup verified',
+    cleanup,
+  };
+}
+
+function verifyDoctorSandboxRemoteCleanup(repoRoot, metadata) {
+  if (!metadata.branch || !hasOriginRemote(repoRoot)) {
+    return {
+      status: 'skipped',
+      note: 'doctor sandbox remote cleanup skipped',
+    };
+  }
+
+  const remoteBefore = run(
+    'git',
+    ['-C', repoRoot, 'ls-remote', '--heads', 'origin', metadata.branch],
+    { timeout: 20_000 },
+  );
+  if (isSpawnFailure(remoteBefore)) {
+    throw remoteBefore.error;
+  }
+  if (remoteBefore.status !== 0) {
+    return {
+      status: 'failed',
+      note: 'doctor sandbox remote branch inspection failed',
+      stdout: remoteBefore.stdout || '',
+      stderr: remoteBefore.stderr || '',
+    };
+  }
+  if (!String(remoteBefore.stdout || '').trim()) {
+    return {
+      status: 'verified',
+      note: 'doctor sandbox remote cleanup verified',
+    };
+  }
+
+  const deleteResult = run(
+    'git',
+    ['-C', repoRoot, 'push', 'origin', '--delete', metadata.branch],
+    { timeout: 30_000 },
+  );
+  if (isSpawnFailure(deleteResult)) {
+    throw deleteResult.error;
+  }
+  if (deleteResult.status !== 0) {
+    return {
+      status: 'failed',
+      note: 'doctor sandbox remote branch cleanup failed',
+      stdout: deleteResult.stdout || '',
+      stderr: deleteResult.stderr || '',
+    };
+  }
+
+  const remoteAfter = run(
+    'git',
+    ['-C', repoRoot, 'ls-remote', '--heads', 'origin', metadata.branch],
+    { timeout: 20_000 },
+  );
+  if (isSpawnFailure(remoteAfter)) {
+    throw remoteAfter.error;
+  }
+  if (remoteAfter.status !== 0) {
+    return {
+      status: 'failed',
+      note: 'doctor sandbox remote cleanup recheck failed',
+      stdout: remoteAfter.stdout || '',
+      stderr: remoteAfter.stderr || '',
+    };
+  }
+  if (String(remoteAfter.stdout || '').trim()) {
+    return {
+      status: 'failed',
+      note: 'doctor sandbox remote branch still present after cleanup',
+      stdout: remoteAfter.stdout || '',
+      stderr: remoteAfter.stderr || '',
+    };
+  }
+
+  return {
+    status: 'verified',
+    note: 'doctor sandbox remote cleanup verified',
+    stdout: deleteResult.stdout || '',
+    stderr: deleteResult.stderr || '',
+  };
+}
+
 function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
   if (!hasOriginRemote(blocked.repoRoot)) {
     return {
@@ -353,8 +465,8 @@ function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
 
   const finishResult = runPackageAsset(
     'branchFinish',
-    ['--branch', metadata.branch, '--base', blocked.branch, '--via-pr', waitForMergeArg, '--cleanup'],
-    { cwd: metadata.worktreePath, timeout: finishTimeoutMs },
+    ['--branch', metadata.branch, '--base', blocked.branch, '--via-pr', waitForMergeArg, '--no-cleanup'],
+    { cwd: blocked.repoRoot, timeout: finishTimeoutMs },
   );
   if (isSpawnFailure(finishResult)) {
     return {
@@ -384,11 +496,52 @@ function finishDoctorSandboxBranch(blocked, metadata, options = {}) {
     };
   }
 
+  let cleanupVerification;
+  try {
+    cleanupVerification = verifyDoctorSandboxCleanup(blocked.repoRoot, metadata);
+  } catch (error) {
+    return {
+      status: 'failed',
+      note: `doctor sandbox cleanup verification failed: ${error.message}`,
+      stdout: finishResult.stdout || '',
+      stderr: finishResult.stderr || '',
+    };
+  }
+  if (cleanupVerification.status === 'failed') {
+    return {
+      status: 'failed',
+      note: cleanupVerification.note,
+      stdout: finishResult.stdout || '',
+      stderr: finishResult.stderr || '',
+    };
+  }
+
+  let remoteCleanupVerification;
+  try {
+    remoteCleanupVerification = verifyDoctorSandboxRemoteCleanup(blocked.repoRoot, metadata);
+  } catch (error) {
+    return {
+      status: 'failed',
+      note: `doctor sandbox remote cleanup verification failed: ${error.message}`,
+      stdout: finishResult.stdout || '',
+      stderr: finishResult.stderr || '',
+    };
+  }
+  if (remoteCleanupVerification.status === 'failed') {
+    return {
+      status: 'failed',
+      note: remoteCleanupVerification.note,
+      stdout: [finishResult.stdout || '', remoteCleanupVerification.stdout || ''].filter(Boolean).join('\n'),
+      stderr: [finishResult.stderr || '', remoteCleanupVerification.stderr || ''].filter(Boolean).join('\n'),
+    };
+  }
+
   return {
     status: 'completed',
-    note: 'doctor sandbox finish flow completed',
-    stdout: finishResult.stdout || '',
-    stderr: finishResult.stderr || '',
+    note: 'doctor sandbox finish flow completed and cleanup verified',
+    stdout: [finishResult.stdout || '', remoteCleanupVerification.stdout || ''].filter(Boolean).join('\n'),
+    stderr: [finishResult.stderr || '', remoteCleanupVerification.stderr || ''].filter(Boolean).join('\n'),
+    cleanup: cleanupVerification.cleanup,
   };
 }
 
