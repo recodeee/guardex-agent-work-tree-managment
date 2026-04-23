@@ -696,6 +696,14 @@ function changeRiskBadges(change) {
   ].filter(Boolean));
 }
 
+function changeNeedsWarningIcon(change) {
+  return Boolean(
+    change?.protectedBranch
+    || change?.hasForeignLock
+    || (!change?.hasForeignLock && change?.lockOwnerBranch),
+  );
+}
+
 function buildSessionCardDescription(session) {
   const provider = resolveSessionProvider(session);
   const statusAgentLabel = `${sessionStatusLabel(session)}: ${session.agentName || 'agent'}`;
@@ -2796,7 +2804,7 @@ function buildUnassignedChangeNodes(changes) {
   return sortUnassignedChanges(changes).map((change) => new ChangeItem(change, {
     label: compactRelativePath(change.relativePath),
     description: buildUnassignedChangeDescription(change),
-    iconId: changeRiskBadges(change).length > 0 ? 'warning' : undefined,
+    iconId: changeNeedsWarningIcon(change) ? 'warning' : undefined,
   }));
 }
 

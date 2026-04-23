@@ -3664,3 +3664,101 @@ test('active-agents extension uses bundled OpenSpec icons in Active Agents tree 
     subscription.dispose?.();
   }
 });
+
+test('active-agents extension keeps semantic OpenSpec icons for delta-only unassigned changes', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-openspec-unassigned-icons-'));
+  initGitRepo(tempRoot);
+  fs.writeFileSync(path.join(tempRoot, 'tracked.txt'), 'base\n', 'utf8');
+  runGit(tempRoot, ['add', 'tracked.txt']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+  runGit(tempRoot, ['checkout', '-b', 'agent/codex/unassigned-root']);
+  const branch = 'agent/codex/live-task';
+  const worktreePath = path.join(
+    tempRoot,
+    '.omx',
+    'agent-worktrees',
+    'agent__codex__live-task',
+  );
+  fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
+  runGit(tempRoot, ['worktree', 'add', '-b', branch, worktreePath]);
+  const changeDir = path.join(tempRoot, 'openspec', 'changes', 'icon-pass');
+  const proposalPath = path.join(changeDir, 'proposal.md');
+  const tasksPath = path.join(changeDir, 'tasks.md');
+  const specPath = path.join(changeDir, 'specs', 'active-agents-icons', 'spec.md');
+  fs.mkdirSync(path.dirname(specPath), { recursive: true });
+  fs.writeFileSync(proposalPath, 'proposal\n', 'utf8');
+  fs.writeFileSync(tasksPath, 'tasks\n', 'utf8');
+  fs.writeFileSync(specPath, 'spec\n', 'utf8');
+  writeSessionRecord(tempRoot, sessionSchema.buildSessionRecord({
+    repoRoot: tempRoot,
+    branch,
+    taskName: 'live-task',
+    agentName: 'codex',
+    worktreePath,
+    pid: process.pid,
+    cliName: 'codex',
+    state: 'working',
+  }));
+
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  vscode.workspace.findFiles = async () => [];
+  let repoChanges = [
+    {
+      relativePath: 'openspec/changes/icon-pass/proposal.md',
+      absolutePath: proposalPath,
+      statusLabel: 'A',
+      statusText: 'Added',
+    },
+    {
+      relativePath: 'openspec/changes/icon-pass/tasks.md',
+      absolutePath: tasksPath,
+      statusLabel: 'A',
+      statusText: 'Added',
+    },
+    {
+      relativePath: 'openspec/changes/icon-pass/specs/active-agents-icons/spec.md',
+      absolutePath: specPath,
+      statusLabel: 'A',
+      statusText: 'Added',
+    },
+  ];
+  const mockSessionSchema = {
+    ...sessionSchema,
+    readActiveSessions: () => sessionSchema.readActiveSessions(tempRoot, { includeStale: true }),
+    readRepoChanges: () => repoChanges,
+  };
+  const extension = loadExtensionWithMockVscode(vscode, mockSessionSchema);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+  const provider = registrations.providers[0].provider;
+  await provider.getChildren();
+  await flushAsyncWork();
+
+  repoChanges = repoChanges.map((change) => ({
+    ...change,
+    statusLabel: 'M',
+    statusText: 'Modified',
+  }));
+  const [repoItem] = await provider.getChildren();
+  const unassignedSection = await getSectionByLabel(provider, repoItem, 'Unassigned changes');
+  const unassignedItems = await provider.getChildren(unassignedSection);
+  assert.equal(unassignedItems.length, 3);
+
+  const proposalItem = unassignedItems.find((item) => item.label === 'openspec/.../proposal.md');
+  const tasksItem = unassignedItems.find((item) => item.label === 'openspec/.../tasks.md');
+  const specItem = unassignedItems.find((item) => item.label === 'openspec/.../spec.md');
+  assert.ok(proposalItem);
+  assert.ok(tasksItem);
+  assert.ok(specItem);
+  assert.equal(proposalItem.description, 'M · Updated');
+  assert.equal(tasksItem.description, 'M · Updated');
+  assert.equal(specItem.description, 'M · Updated');
+  assertBundledIcon(proposalItem, 'openspec.svg');
+  assertBundledIcon(tasksItem, 'plan.svg');
+  assertBundledIcon(specItem, 'spec.svg');
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
