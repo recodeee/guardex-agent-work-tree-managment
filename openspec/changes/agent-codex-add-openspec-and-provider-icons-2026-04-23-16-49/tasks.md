@@ -27,8 +27,8 @@ Handoff: 2026-04-23 codex owns branch `agent/codex/add-openspec-and-provider-ico
 
 ## 4. Cleanup (mandatory; run before claiming completion)
 
-- [ ] 4.1 Run `gx branch finish --branch "agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49" --base main --via-pr --wait-for-merge --cleanup`.
-- [ ] 4.2 Record the PR URL and final `MERGED` state in the completion handoff.
-- [ ] 4.3 Confirm the sandbox worktree and branch refs are gone after cleanup.
+- [x] 4.1 Run `gx branch finish --branch "agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49" --base main --via-pr --wait-for-merge --cleanup`. Result: merged via PR flow, cleaned the source agent worktree, and reported `Merged 'agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49' into 'main' via pr flow and cleaned source branch/worktree.`
+- [x] 4.2 Record the PR URL and final `MERGED` state in the completion handoff. Result: `gh pr view agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49 --json url,state,mergedAt,mergeCommit` returned `https://github.com/recodeee/gitguardex/pull/380`, `MERGED`, `2026-04-23T14:53:31Z`, merge commit `c78d52058f680a78c03caef446edf6783e087cb1`.
+- [x] 4.3 Confirm the sandbox worktree and branch refs are gone after cleanup. Result: `git branch --list 'agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49'` and `git branch -r --list 'origin/agent/codex/add-openspec-and-provider-icons-2026-04-23-16-49'` returned no refs after `git fetch --prune origin`; `git worktree list --porcelain` no longer shows `agent__codex__add-openspec-and-provider-icons-2026-04-23-16-49`.
 
 BLOCKED: none.
