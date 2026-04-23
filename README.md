@@ -2,20 +2,28 @@
   <img alt="gitguardex logo" src="./logo.png" width="390">
 </p>
 
-<h1 align="center"> guardian t-rex for multi-agent repos</h1>
+<h1 align="center">GitGuardex</h1>
+
+<p align="center">
+  <strong>guardian t-rex for multi-agent repos</strong>
+</p>
 
 <p align="center">
   isolated worktrees, file locks, and PR-only merges for codex, claude, and human teammates
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm version" src="https://img.shields.io/npm/v/%40imdeadpool%2Fguardex?label=npm&style=flat-square&color=cb3837&logo=npm&logoColor=white"></a>
-  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm downloads per month" src="https://img.shields.io/npm/dm/%40imdeadpool%2Fguardex?label=downloads%2Fmonth&style=flat-square&color=0b76c5"></a>
-  <a href="https://github.com/recodeee/gitguardex/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/recodeee/gitguardex/ci.yml?branch=main&label=CI&style=flat-square"></a>
-  <a href="https://scorecard.dev/viewer/?uri=github.com/recodeee/gitguardex"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/recodeee/gitguardex?label=OpenSSF%20Scorecard&style=flat-square"></a>
-  <a href="https://github.com/recodeee/gitguardex/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/recodeee/gitguardex?label=stars&style=flat-square&color=d4ac0d"></a>
-  <a href="https://github.com/recodeee/gitguardex/commits/main"><img alt="last commit" src="https://img.shields.io/github/last-commit/recodeee/gitguardex?label=last%20commit&style=flat-square&color=7aa2f7"></a>
-  <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/%40imdeadpool%2Fguardex?label=license&style=flat-square&color=97ca00"></a>
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="CLI version" src="https://img.shields.io/npm/v/%40imdeadpool%2Fguardex?label=CLI&style=for-the-badge&color=0b76c5&labelColor=3f3f46&logo=npm&logoColor=white"></a>
+  <a href="https://www.npmjs.com/package/@imdeadpool/guardex"><img alt="npm downloads per month" src="https://img.shields.io/npm/dm/%40imdeadpool%2Fguardex?label=downloads%2Fmonth&style=for-the-badge&color=22c55e&labelColor=3f3f46"></a>
+  <a href="https://github.com/recodeee/gitguardex/actions/workflows/ci.yml"><img alt="CI status" src="https://img.shields.io/github/actions/workflow/status/recodeee/gitguardex/ci.yml?branch=main&label=CI&style=for-the-badge&labelColor=3f3f46"></a>
+  <a href="./LICENSE"><img alt="license" src="https://img.shields.io/npm/l/%40imdeadpool%2Fguardex?label=license&style=for-the-badge&color=97ca00&labelColor=3f3f46"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/recodeee/gitguardex/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/recodeee/gitguardex?label=stars&style=for-the-badge&color=0b76c5&labelColor=3f3f46"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/recodeee/gitguardex"><img alt="OpenSSF Scorecard" src="https://img.shields.io/ossf-scorecard/github.com/recodeee/gitguardex?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=3f3f46"></a>
+  <a href="https://nodejs.org"><img alt="Node 18 or newer" src="https://img.shields.io/badge/node-18%2B-f59e0b?style=for-the-badge&labelColor=3f3f46&logo=node.js&logoColor=white"></a>
+  <a href="https://github.com/sponsors/recodeecom"><img alt="GitHub Sponsors support development" src="https://img.shields.io/badge/GitHub%20Sponsors-support%20development-db2777?style=for-the-badge&labelColor=3f3f46&logo=githubsponsors&logoColor=white"></a>
 </p>
 
 <p align="center">

@@ -78,6 +78,19 @@ test('README release notes include current package version', () => {
   );
 });
 
+test('README hero keeps CLI-first scannable badges', () => {
+  const readme = fs.readFileSync(readmePath, 'utf8');
+  assert.match(readme, /<h1 align="center">GitGuardex<\/h1>/);
+  assert.match(readme, /label=CLI&style=for-the-badge/);
+  assert.match(readme, /label=downloads%2Fmonth&style=for-the-badge/);
+  assert.match(readme, /label=CI&style=for-the-badge/);
+  assert.match(readme, /label=license&style=for-the-badge/);
+  assert.match(readme, /label=stars&style=for-the-badge/);
+  assert.match(readme, /label=OpenSSF%20Scorecard&style=for-the-badge/);
+  assert.match(readme, /https:\/\/img\.shields\.io\/badge\/node-18%2B-f59e0b\?style=for-the-badge/);
+  assert.match(readme, /GitHub%20Sponsors-support%20development-db2777\?style=for-the-badge/);
+});
+
 test('README documents gx release as README-driven GitHub release writer', () => {
   const readme = fs.readFileSync(readmePath, 'utf8');
   assert.match(readme, /gx release\s+# create\/update the current GitHub release from README notes/);
