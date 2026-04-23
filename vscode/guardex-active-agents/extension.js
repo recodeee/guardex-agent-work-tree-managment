@@ -38,6 +38,7 @@ const REFRESH_POLL_INTERVAL_MS = 30_000;
 const INSPECT_PANEL_VIEW_TYPE = 'gitguardex.activeAgents.inspect';
 const GIT_CONFIGURATION_SECTION = 'git';
 const REPO_SCAN_IGNORED_FOLDERS_SETTING = 'repositoryScanIgnoredFolders';
+const BUNDLED_FILE_ICONS_MANIFEST_RELATIVE = path.join('fileicons', 'gitguardex-fileicons.json');
 const MANAGED_REPO_SCAN_IGNORED_FOLDERS = [
   '.omx/agent-worktrees',
   '**/.omx/agent-worktrees',
@@ -74,6 +75,7 @@ const SESSION_PROVIDER_BRANDS = {
     badge: 'CL',
   },
 };
+let bundledTreeIconThemeCache = null;
 
 function iconColorId(iconId) {
   switch (iconId) {
@@ -117,6 +119,76 @@ function themeIcon(iconId, colorId = iconColorId(iconId)) {
 
 function sessionDecorationUri(branch) {
   return vscode.Uri.parse(`${SESSION_DECORATION_SCHEME}://${sanitizeBranchForFile(branch)}`);
+}
+
+function emptyBundledTreeIconTheme() {
+  return {
+    iconPathById: new Map(),
+    fileNames: {},
+    folderNames: {},
+    fileExtensions: {},
+  };
+}
+
+function loadBundledTreeIconTheme() {
+  if (bundledTreeIconThemeCache) {
+    return bundledTreeIconThemeCache;
+  }
+
+  const manifestPath = path.join(__dirname, BUNDLED_FILE_ICONS_MANIFEST_RELATIVE);
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    const manifestDir = path.dirname(manifestPath);
+    const iconPathById = new Map();
+    for (const [iconId, definition] of Object.entries(parsed?.iconDefinitions || {})) {
+      if (typeof definition?.iconPath !== 'string' || !definition.iconPath.trim()) {
+        continue;
+      }
+      const iconUri = vscode.Uri.file(path.resolve(manifestDir, definition.iconPath));
+      iconPathById.set(iconId, {
+        light: iconUri,
+        dark: iconUri,
+      });
+    }
+    bundledTreeIconThemeCache = {
+      iconPathById,
+      fileNames: parsed?.fileNames || {},
+      folderNames: parsed?.folderNames || {},
+      fileExtensions: parsed?.fileExtensions || {},
+    };
+  } catch (_error) {
+    bundledTreeIconThemeCache = emptyBundledTreeIconTheme();
+  }
+
+  return bundledTreeIconThemeCache;
+}
+
+function resolveBundledTreeItemIconId(relativePath, kind = 'file') {
+  const normalizedRelativePath = normalizeRelativePath(relativePath);
+  const entryName = path.posix.basename(normalizedRelativePath || '');
+  if (!entryName) {
+    return '';
+  }
+
+  const bundledTheme = loadBundledTreeIconTheme();
+  if (kind === 'folder') {
+    return bundledTheme.folderNames[entryName] || '';
+  }
+
+  if (bundledTheme.fileNames[entryName]) {
+    return bundledTheme.fileNames[entryName];
+  }
+
+  const matchingExtension = Object.keys(bundledTheme.fileExtensions)
+    .sort((left, right) => right.length - left.length)
+    .find((extension) => entryName === extension || entryName.endsWith(`.${extension}`));
+  return matchingExtension ? bundledTheme.fileExtensions[matchingExtension] : '';
+}
+
+function resolveBundledTreeItemIcon(relativePath, kind = 'file') {
+  const bundledTheme = loadBundledTreeIconTheme();
+  const iconId = resolveBundledTreeItemIconId(relativePath, kind);
+  return iconId ? bundledTheme.iconPathById.get(iconId) : undefined;
 }
 
 function sessionIdleDecoration(session, now = Date.now()) {
@@ -1236,7 +1308,9 @@ class FolderItem extends vscode.TreeItem {
     this.items = items;
     this.description = typeof options.description === 'string' ? options.description : '';
     this.tooltip = options.tooltip || relativePath || label;
-    this.iconPath = themeIcon(options.iconId || 'folder', options.iconColorId);
+    this.iconPath = options.iconPath
+      || (!options.iconId ? resolveBundledTreeItemIcon(relativePath || label, 'folder') : undefined)
+      || themeIcon(options.iconId || 'folder', options.iconColorId);
     this.contextValue = options.contextValue || 'gitguardex.folder';
   }
 }
@@ -1262,6 +1336,8 @@ class ChangeItem extends vscode.TreeItem {
     this.resourceUri = vscode.Uri.file(change.absolutePath);
     if (options.iconId || change.hasForeignLock) {
       this.iconPath = themeIcon(options.iconId || 'warning', options.iconColorId || 'list.warningForeground');
+    } else {
+      this.iconPath = options.iconPath || resolveBundledTreeItemIcon(change.relativePath || label, 'file');
     }
     this.contextValue = 'gitguardex.change';
     this.command = {

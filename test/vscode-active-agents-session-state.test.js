@@ -216,6 +216,15 @@ async function getChildByLabel(provider, parentItem, label) {
   return match;
 }
 
+function assertBundledIcon(item, iconFileName) {
+  assert.equal(
+    item?.iconPath?.light?.fsPath.endsWith(path.join('fileicons', 'icons', iconFileName)),
+    true,
+    `Expected ${item?.label || 'item'} to use ${iconFileName}`,
+  );
+  assert.equal(item?.iconPath?.light?.fsPath, item?.iconPath?.dark?.fsPath);
+}
+
 async function getSessionByBranch(provider, sectionItem, branch) {
   const children = await provider.getChildren(sectionItem);
   const match = children.find((item) => item.session?.branch === branch);
@@ -3318,6 +3327,78 @@ test('active-agents extension opens the selected changed file through the Git di
     openChangeCalls,
     [['git.openChange', path.join(worktreePath, 'tracked.txt')]],
   );
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension uses bundled OpenSpec icons in Active Agents tree nodes', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-openspec-icons-'));
+  initGitRepo(tempRoot);
+  const branch = 'agent/codex/openspec-icons';
+  runGit(tempRoot, ['checkout', '-b', branch]);
+
+  const proposalPath = path.join(tempRoot, 'openspec', 'changes', 'icon-pass', 'proposal.md');
+  const tasksPath = path.join(tempRoot, 'openspec', 'changes', 'icon-pass', 'tasks.md');
+  const specPath = path.join(tempRoot, 'openspec', 'changes', 'icon-pass', 'specs', 'active-agents-icons', 'spec.md');
+  fs.mkdirSync(path.dirname(proposalPath), { recursive: true });
+  fs.mkdirSync(path.dirname(specPath), { recursive: true });
+  fs.writeFileSync(proposalPath, 'proposal base\n', 'utf8');
+  fs.writeFileSync(tasksPath, 'tasks base\n', 'utf8');
+  fs.writeFileSync(specPath, 'spec base\n', 'utf8');
+  runGit(tempRoot, ['add', 'openspec']);
+  runGit(tempRoot, ['commit', '-m', 'baseline']);
+  fs.writeFileSync(proposalPath, 'proposal base\nchanged\n', 'utf8');
+  fs.writeFileSync(tasksPath, 'tasks base\nchanged\n', 'utf8');
+  fs.writeFileSync(specPath, 'spec base\nchanged\n', 'utf8');
+
+  const sessionPath = sessionSchema.sessionFilePathForBranch(tempRoot, branch);
+  fs.mkdirSync(path.dirname(sessionPath), { recursive: true });
+  fs.writeFileSync(
+    sessionPath,
+    `${JSON.stringify(sessionSchema.buildSessionRecord({
+      repoRoot: tempRoot,
+      branch,
+      taskName: 'openspec-icons',
+      agentName: 'codex',
+      worktreePath: tempRoot,
+      pid: process.pid,
+      cliName: 'codex',
+    }), null, 2)}\n`,
+    'utf8',
+  );
+
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  vscode.workspace.findFiles = async () => [{ fsPath: sessionPath }];
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+  await flushAsyncWork();
+
+  const provider = registrations.providers[0].provider;
+  const [repoItem] = await provider.getChildren();
+  const advancedSection = await getSectionByLabel(provider, repoItem, 'Advanced details');
+  const activeAgentTree = await getSectionByLabel(provider, advancedSection, 'Active agent tree');
+  const rawWorkingSection = await getSectionByLabel(provider, activeAgentTree, 'WORKING NOW');
+  const { sessionItem } = await getOnlyWorktreeAndSession(provider, rawWorkingSection);
+
+  const openspecFolder = await getChildByLabel(provider, sessionItem, 'openspec');
+  const changesFolder = await getChildByLabel(provider, openspecFolder, 'changes');
+  assertBundledIcon(changesFolder, 'openspec.svg');
+
+  const iconPassFolder = await getChildByLabel(provider, changesFolder, 'icon-pass');
+  const proposalItem = await getChildByLabel(provider, iconPassFolder, 'proposal.md');
+  const specsFolder = await getChildByLabel(provider, iconPassFolder, 'specs');
+  const tasksItem = await getChildByLabel(provider, iconPassFolder, 'tasks.md');
+  assertBundledIcon(proposalItem, 'openspec.svg');
+  assertBundledIcon(specsFolder, 'spec.svg');
+  assertBundledIcon(tasksItem, 'plan.svg');
+
+  const activeAgentsIconsFolder = await getChildByLabel(provider, specsFolder, 'active-agents-icons');
+  const specItem = await getChildByLabel(provider, activeAgentsIconsFolder, 'spec.md');
+  assertBundledIcon(specItem, 'spec.svg');
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
