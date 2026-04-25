@@ -266,6 +266,14 @@ Being honest about where this still has issues:
 <details open>
 <summary><strong>v7.x</strong></summary>
 
+### v7.0.37
+- Bumped `@imdeadpool/guardex` from `7.0.36` to `7.0.37` so the current
+  package can publish under a fresh npm version after `7.0.36` reached the
+  registry.
+- Synced the shipped Active Agents template with the canonical VS Code
+  extension source so Colony task counts and details install with the package.
+- No new CLI command behavior is introduced in this release lane.
+
 ### v7.0.36
 - Bumped `@imdeadpool/guardex` from `7.0.35` to `7.0.36` so the latest
   branch-finish cwd-prune fix can ship under a fresh npm version after PR #424.
