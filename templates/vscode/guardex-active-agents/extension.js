@@ -2395,6 +2395,51 @@ function isPathWithin(parentPath, targetPath) {
   return relativePath === '' || (!relativePath.startsWith('..') && !path.isAbsolute(relativePath));
 }
 
+function normalizeAbsolutePath(value) {
+  return typeof value === 'string' && value.trim() ? path.resolve(value) : '';
+}
+
+function removeDeletedWorktreeWorkspaceFolder(worktreePath) {
+  if (typeof vscode.workspace.updateWorkspaceFolders !== 'function') {
+    return false;
+  }
+
+  const normalizedWorktreePath = normalizeAbsolutePath(worktreePath);
+  if (!normalizedWorktreePath) {
+    return false;
+  }
+
+  const workspaceFolders = vscode.workspace.workspaceFolders || [];
+  const folderIndex = workspaceFolders.findIndex((folder) => (
+    normalizeAbsolutePath(folder?.uri?.fsPath) === normalizedWorktreePath
+  ));
+  if (folderIndex < 0) {
+    return false;
+  }
+
+  try {
+    return vscode.workspace.updateWorkspaceFolders(folderIndex, 1) === true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function closeDeletedWorktreeRepository(worktreePath) {
+  const normalizedWorktreePath = normalizeAbsolutePath(worktreePath);
+  if (!normalizedWorktreePath || fs.existsSync(normalizedWorktreePath)) {
+    return false;
+  }
+
+  try {
+    await vscode.commands.executeCommand('git.close', vscode.Uri.file(normalizedWorktreePath));
+  } catch (_error) {
+    // The Git extension may have already removed this repository.
+  }
+
+  removeDeletedWorktreeWorkspaceFolder(normalizedWorktreePath);
+  return true;
+}
+
 function localizeChangeForSession(session, change) {
   if (!change?.absolutePath || !isPathWithin(session.worktreePath, change.absolutePath)) {
     return null;
@@ -3434,6 +3479,7 @@ class ActiveAgentsRefreshController {
     this.inspectPanelManager = inspectPanelManager;
     this.refreshTimer = null;
     this.sessionWatchers = new Map();
+    this.closedMissingWorktreeRepositories = new Set();
   }
 
   scheduleRefresh() {
@@ -3458,6 +3504,16 @@ class ActiveAgentsRefreshController {
 
     for (const entry of repoEntries) {
       for (const session of entry.sessions) {
+        const worktreePath = sessionWorktreePath(session);
+        const normalizedWorktreePath = normalizeAbsolutePath(worktreePath);
+        if (normalizedWorktreePath && !fs.existsSync(normalizedWorktreePath)) {
+          await this.closeMissingWorktreeRepository(normalizedWorktreePath);
+          continue;
+        }
+        if (normalizedWorktreePath) {
+          this.closedMissingWorktreeRepositories.delete(normalizedWorktreePath);
+        }
+
         const sessionKey = resolveSessionWatcherKey(session);
         liveSessionKeys.add(sessionKey);
         if (this.sessionWatchers.has(sessionKey)) {
@@ -3481,6 +3537,16 @@ class ActiveAgentsRefreshController {
       entry.watcher.dispose();
       this.sessionWatchers.delete(sessionKey);
     }
+  }
+
+  async closeMissingWorktreeRepository(worktreePath) {
+    const normalizedWorktreePath = normalizeAbsolutePath(worktreePath);
+    if (!normalizedWorktreePath || this.closedMissingWorktreeRepositories.has(normalizedWorktreePath)) {
+      return;
+    }
+
+    this.closedMissingWorktreeRepositories.add(normalizedWorktreePath);
+    await closeDeletedWorktreeRepository(normalizedWorktreePath);
   }
 
   dispose() {

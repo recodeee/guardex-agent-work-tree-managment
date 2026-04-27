@@ -280,6 +280,7 @@ function createMockVscode(tempRoot) {
     fileWatchers: [],
     watchers: [],
     workspaceFolderListeners: [],
+    workspaceFolderUpdates: [],
     configurationUpdates: [],
     workspaceConfigurationValues: new Map(),
   };
@@ -642,6 +643,11 @@ function createMockVscode(tempRoot) {
               registrations.workspaceFolderListeners.splice(index, 1);
             }
           });
+        },
+        updateWorkspaceFolders(start, deleteCount, ...folders) {
+          registrations.workspaceFolderUpdates.push({ start, deleteCount, folders });
+          this.workspaceFolders.splice(start, deleteCount, ...folders);
+          return true;
         },
         workspaceFolders: [{ uri: { fsPath: tempRoot } }],
       },
@@ -1501,6 +1507,60 @@ test('active-agents extension registers tree and decoration providers', async ()
   assert.equal(rootItems[0].label, 'No active Guardex agents');
   assert.equal(registrations.treeViews[0].badge, undefined);
   assert.equal(registrations.treeViews[0].message, undefined);
+
+  for (const subscription of context.subscriptions) {
+    subscription.dispose?.();
+  }
+});
+
+test('active-agents extension closes deleted worktree repositories during refresh', async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'guardex-vscode-close-deleted-'));
+  const worktreePath = path.join(tempRoot, '.omx', 'agent-worktrees', 'deleted-task');
+  fs.mkdirSync(worktreePath, { recursive: true });
+  const sessionPath = writeSessionRecord(tempRoot, sessionSchema.buildSessionRecord({
+    repoRoot: tempRoot,
+    branch: 'agent/codex/deleted-task',
+    taskName: 'deleted-task',
+    agentName: 'codex',
+    worktreePath,
+    pid: process.pid,
+    cliName: 'codex',
+  }));
+
+  const { registrations, vscode } = createMockVscode(tempRoot);
+  vscode.workspace.workspaceFolders = [
+    { uri: { fsPath: tempRoot } },
+    { uri: { fsPath: worktreePath } },
+  ];
+  vscode.workspace.findFiles = async () => [{ fsPath: sessionPath }];
+  const extension = loadExtensionWithMockVscode(vscode);
+  const context = { subscriptions: [] };
+
+  extension.activate(context);
+  await flushAsyncWork();
+
+  const gitCloseCalls = () => registrations.executedCommands.filter((entry) => (
+    entry.command === 'git.close'
+  ));
+  assert.equal(gitCloseCalls().length, 0);
+
+  fs.rmSync(worktreePath, { recursive: true, force: true });
+  await registrations.commands.get('gitguardex.activeAgents.refresh')();
+  await flushAsyncWork();
+
+  assert.equal(gitCloseCalls().length, 1);
+  assert.equal(gitCloseCalls()[0].args[0].fsPath, path.resolve(worktreePath));
+  assert.deepEqual(registrations.workspaceFolderUpdates, [
+    { start: 1, deleteCount: 1, folders: [] },
+  ]);
+  assert.deepEqual(
+    vscode.workspace.workspaceFolders.map((folder) => folder.uri.fsPath),
+    [tempRoot],
+  );
+
+  await registrations.commands.get('gitguardex.activeAgents.refresh')();
+  await flushAsyncWork();
+  assert.equal(gitCloseCalls().length, 1);
 
   for (const subscription of context.subscriptions) {
     subscription.dispose?.();
